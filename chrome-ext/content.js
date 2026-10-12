@@ -97,12 +97,12 @@ function injectButton(video) {
   parent.appendChild(wrap);
 
   let recorder = null;
-  let chunks = [];
   let timerInterval = null;
   let recordedTracks = [];
   let removeVideoEndHandler = null;
   let audioMonitor = null;
   let starting = false;
+  let finishing = false;
 
   function rememberFlakyElementCapture() {
     console.warn("[ClipMeme] No video data received. Replay the video and retry Clip.");
@@ -184,22 +184,49 @@ function injectButton(video) {
 
     const activeRecorder = recorder;
     recorder = null;
+    finishing = true;
     clearRecordingHooks();
     btn.textContent = "⏳ Sending…";
     btn.disabled = true;
 
     console.log(`[ClipMeme] stopping recorder: ${reason}`);
-    try { activeRecorder.requestData(); } catch { /* recorder may already be stopping */ }
     if (activeRecorder.state !== "inactive") {
       activeRecorder.stop();
     }
+  }
+
+  function watchVideoEnd(activeRecorder) {
+    let frameId = null;
+    const onVideoEnded = () => stopRecording("video ended");
+    const checkEnd = () => {
+      if (recorder !== activeRecorder) return;
+      const remaining = video.duration - video.currentTime;
+      // Some players tear down capture tracks at ended, losing the encoder's tail.
+      // Flush just before that teardown, without pausing or seeking the player.
+      if (!video.paused && !video.seeking && Number.isFinite(video.duration) &&
+          video.duration > 0 && remaining > 0 && remaining <= 0.1) {
+        stopRecording("video finishing");
+      }
+    };
+    const onFrame = () => {
+      checkEnd();
+      if (recorder === activeRecorder) frameId = video.requestVideoFrameCallback(onFrame);
+    };
+    const endInterval = setInterval(checkEnd, 50);
+    video.addEventListener("ended", onVideoEnded, { once: true });
+    if (video.requestVideoFrameCallback) frameId = video.requestVideoFrameCallback(onFrame);
+    removeVideoEndHandler = () => {
+      clearInterval(endInterval);
+      video.removeEventListener("ended", onVideoEnded);
+      if (frameId !== null) video.cancelVideoFrameCallback?.(frameId);
+    };
   }
 
   btn.addEventListener("click", async (e) => {
     // Prevent click from bubbling to the video player (YouTube pauses on click)
     e.stopPropagation();
     e.preventDefault();
-    if (starting) return;
+    if (starting || finishing) return;
 
     if (!recorder) {
       // ── START ──────────────────────────────────
@@ -209,6 +236,8 @@ function injectButton(video) {
       try {
         stopAudioMonitor();
         stopRecordedTracks();
+        // Restart paused/ended playback before capturing, so tracks are fresh.
+        if (video.paused) await video.play();
         const { stream: recStream, label: captureMode } = await getRecordingStream();
         const videoTracks = recStream.getVideoTracks();
         const audioTracks = recStream.getAudioTracks();
@@ -222,29 +251,35 @@ function injectButton(video) {
 
         console.log(`[ClipMeme] recording via ${captureMode}: ${videoTracks.length}v + ${audioTracks.length}a tracks, mime: ${mime}`);
 
-        chunks = [];
-        recorder = new MediaRecorder(recStream, { mimeType: mime });
-        recorder.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
-        recorder.onerror = (ev) => {
-          clearRecordingHooks();
-          stopAudioMonitor();
-          stopRecordedTracks();
+        const chunks = [];
+        const activeRecorder = new MediaRecorder(recStream, { mimeType: mime });
+        recorder = activeRecorder;
+        let finalized = false;
+        activeRecorder.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
+        activeRecorder.onerror = (ev) => {
+          // Let the recorder deliver its final dataavailable/stop before cleanup.
           console.error("[ClipMeme] recorder error:", ev);
         };
-        recorder.onstop = () => {
+        activeRecorder.onstop = async () => {
+          if (finalized) return;
+          finalized = true;
+          finishing = true;
+          if (recorder === activeRecorder) recorder = null;
+          btn.disabled = true;
           const blob = new Blob(chunks, { type: mime });
           console.log(`[ClipMeme] recorded blob via ${captureMode}: ${blob.size} bytes, ${blob.type || "unknown"}, ${chunks.length} chunks`);
           clearRecordingHooks();
           stopAudioMonitor();
           stopRecordedTracks();
-          sendClip(blob, btn, timerEl, () => {
-            if (captureMode === "element") rememberFlakyElementCapture();
-          });
+          try {
+            await sendClip(blob, btn, timerEl, () => {
+              if (captureMode === "element") rememberFlakyElementCapture();
+            });
+          } finally { finishing = false; }
         };
-        recorder.start(200);
-        const onVideoEnded = () => stopRecording("video ended");
-        video.addEventListener("ended", onVideoEnded, { once: true });
-        removeVideoEndHandler = () => video.removeEventListener("ended", onVideoEnded);
+        activeRecorder.start(200);
+        finishing = false;
+        watchVideoEnd(activeRecorder);
 
         // If the player paused itself before we could stop propagation, resume it
         if (video.paused) {
@@ -260,6 +295,7 @@ function injectButton(video) {
         btn.style.background = "rgba(239,83,80,0.95)";
         btn.disabled = false;
       } catch (err) {
+        finishing = false;
         clearRecordingHooks();
         stopAudioMonitor();
         stopRecordedTracks();
