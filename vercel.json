@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm ci",
+  "functions": {
+    "pages/api/instagram/run-due.ts": { "maxDuration": 300 },
+    "pages/api/instagram/publish.ts": { "maxDuration": 300 },
+    "pages/api/transcribe.ts": { "maxDuration": 180 }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "ClipGrab",
+  "version": "1.0",
+  "description": "Capture any video or live stream from any webpage and edit it instantly in ClipMemeEditor — trim, caption, add memes, and export as MP4.",
+  "permissions": ["activeTab", "tabCapture", "tabs", "storage"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  },
+  "background": { "service_worker": "background.js" },
+  "host_permissions": ["<all_urls>", "http://localhost:3000/*"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": ["http://localhost:3000/*"],
+      "js": ["editor-bridge-main.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://localhost:3000/*"],
+      "js": ["editor-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
