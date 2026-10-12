@@ -1,9 +1,18 @@
 import { useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
+import type { GetServerSideProps } from "next";
 import { createClient } from "@/lib/supabase-browser";
+import { isSignupEnabled } from "@/lib/auth-config";
 
-export default function LoginPage() {
+type LoginProps = { signupEnabled: boolean };
+
+export const getServerSideProps: GetServerSideProps<LoginProps> = async ({ res }) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return { props: { signupEnabled: isSignupEnabled() } };
+};
+
+export default function LoginPage({ signupEnabled = false }: LoginProps) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -13,23 +22,29 @@ export default function LoginPage() {
   const [magicSent, setMagicSent] = useState(false);
 
   const supabase = createClient();
+  const isSigningUp = signupEnabled && mode === "signup";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
+      if (isSigningUp) {
+        const response = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not create your account.");
         setMagicSent(true);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         router.replace("/");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not sign in. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -52,14 +67,14 @@ export default function LoginPage() {
             <div className="bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl p-6 text-center">
               <div className="text-2xl mb-3">📬</div>
               <p className="text-[#ccc] text-sm">Check your email to confirm your account, then sign in.</p>
-              <button onClick={() => setMagicSent(false)} className="mt-4 text-[#ff4444] text-xs hover:underline">
+              <button onClick={() => { setMagicSent(false); setMode("login"); }} className="mt-4 text-[#ff4444] text-xs hover:underline">
                 Back to sign in
               </button>
             </div>
           ) : (
             <div className="bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl p-6">
               {/* Mode tabs */}
-              <div className="flex mb-6 bg-[#111] rounded-lg p-1">
+              {signupEnabled ? <div className="flex mb-6 bg-[#111] rounded-lg p-1">
                 {(["login", "signup"] as const).map((m) => (
                   <button
                     key={m}
@@ -71,11 +86,13 @@ export default function LoginPage() {
                     {m === "login" ? "Sign in" : "Sign up"}
                   </button>
                 ))}
-              </div>
+              </div> : <h1 className="mb-6 text-base font-semibold text-white">Sign in</h1>}
 
               <form onSubmit={handleSubmit} className="space-y-3">
                 <input
                   type="email"
+                  aria-label="Email"
+                  autoComplete="email"
                   placeholder="Email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -84,6 +101,8 @@ export default function LoginPage() {
                 />
                 <input
                   type="password"
+                  aria-label="Password"
+                  autoComplete={isSigningUp ? "new-password" : "current-password"}
                   placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -97,7 +116,7 @@ export default function LoginPage() {
                   disabled={loading}
                   className="w-full bg-[#ff4444] hover:bg-[#cc3333] disabled:opacity-50 text-white font-semibold text-sm py-2 rounded-lg transition-colors"
                 >
-                  {loading ? "..." : mode === "login" ? "Sign in" : "Create account"}
+                  {loading ? "..." : isSigningUp ? "Create account" : "Sign in"}
                 </button>
               </form>
             </div>

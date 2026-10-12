@@ -36,6 +36,24 @@ and cron secrets. Set APP_URL and INSTAGRAM_REDIRECT_URI exactly as in the examp
 Keep the local .env.local unchanged. Run `npm run check:production` with the
 production values in your environment; it prints missing variable NAMES only.
 
+### Signup Toggle
+
+Set `SIGNUP_ENABLED=false` in Vercel Production to hide signup and reject app
+registration requests. Set it to the literal `true` to enable registration.
+When absent, production builds (including previews) default to disabled;
+`npm run dev` defaults to enabled. Blank or invalid values disable signup.
+Existing users can still sign in. The server reads this flag at request time,
+not from a client-bundled NEXT_PUBLIC variable. After changing Vercel environment
+variables, redeploy to apply them; restart a local server after editing its env.
+
+This controls the app's UI and `/api/auth/signup`, not Supabase's public Auth API.
+For a closed beta that must block direct registration too, disable **Allow new
+users to sign up** in Supabase Authentication's general configuration. That is a
+project-wide setting (including localhost/previews sharing the same project).
+To reopen signup, enable both this app flag and the Supabase setting. No Supabase
+dashboard setting is changed by this code. See:
+https://supabase.com/docs/guides/auth/general-configuration
+
 Initially keep INSTAGRAM_SCHEDULER_MODE=disabled and
 INSTAGRAM_SCHEDULER_ENABLED=false. Do not inherit the old local cutoff: choose a
 fresh UTC activation timestamp when intentionally activating production. Retain

@@ -9,6 +9,7 @@ import { detectSceneCuts } from "@/lib/sceneDetection";
 import { generateId, detectPlatform } from "@/lib/utils";
 import type { ClipHistoryItem } from "@/lib/types";
 import { createClient } from "@/lib/supabase-browser";
+import UserProfile from "@/components/UserProfile";
 
 // Dynamic imports (client-only)
 const ModeSwitch = dynamic(() => import("@/components/ModeSwitch"), { ssr: false });
@@ -64,6 +65,7 @@ export default function Home() {
       }
       currentUserRef.current = nextUser;
       setUserId(nextUser);
+      setUserEmail(session?.user.email ?? null);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -822,20 +824,14 @@ export default function Home() {
             {(["editor", "schedule"] as const).map(tab => <button key={tab} role="tab" aria-selected={workspaceTab === tab} onClick={() => setWorkspaceTab(tab)} className={`px-3 py-1.5 text-xs rounded border ${workspaceTab === tab ? "border-[#ff4444] text-white" : "border-[#333] text-[#999]"}`}>{tab === "editor" ? "Editor" : "Schedule"}</button>)}
           </div>
           <div className="flex-1" />
-          {userEmail && (
-            <div className="flex items-center gap-2">
-              <span className="text-[#555] text-xs hidden sm:block">{userEmail}</span>
-              <button
-                onClick={async () => {
+          {userId && (
+            <UserProfile key={userId} userId={userId} email={userEmail ?? ""}
+                onSignOut={async () => {
                   const { error } = await createClient().auth.signOut();
                   if (error) { alert("Could not sign out. Please try again."); return; }
                   router.replace("/login");
                 }}
-                className="text-xs text-[#888] hover:text-[#ff4444] transition-colors px-2 py-1 rounded border border-[#2e2e2e] hover:border-[#ff4444]"
-              >
-                Sign out
-              </button>
-            </div>
+            />
           )}
         </div>
 
