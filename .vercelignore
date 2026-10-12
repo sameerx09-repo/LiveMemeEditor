@@ -1,0 +1,15 @@
+.git/
+.env
+.env.*
+.next/
+.vercel/
+.claude/
+node_modules/
+output/
+dist/
+coverage/
+out/
+build/
+*.log
+*.pem
+*.tsbuildinfo
