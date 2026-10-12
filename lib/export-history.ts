@@ -101,3 +101,16 @@ export async function listScheduledClips(userId: string): Promise<ScheduledClipL
     });
   } finally { db.close(); }
 }
+
+export async function unlinkScheduledClip(userId: string, postId: string): Promise<void> {
+  const db = await openDB();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("scheduled_clips", "readwrite");
+      tx.objectStore("scheduled_clips").delete(`${userId}:${postId}`);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error || new Error("Could not remove schedule reference"));
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}

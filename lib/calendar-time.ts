@@ -16,3 +16,11 @@ export function isFutureSchedule(time: string, now: number): boolean {
   const value = new Date(time).getTime();
   return Number.isFinite(value) && value > now;
 }
+
+export function calendarMoveTime(originalTime: string, slot: Date, daily: boolean, now: number): Date | null {
+  const original = new Date(originalTime);
+  const time = new Date(slot);
+  if (!Number.isFinite(original.getTime()) || !Number.isFinite(time.getTime())) return null;
+  if (daily) time.setHours(original.getHours(), original.getMinutes(), original.getSeconds(), original.getMilliseconds());
+  return time.getTime() > now ? time : null;
+}

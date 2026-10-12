@@ -113,6 +113,7 @@ test("publishes a claimed due post with a fresh media URL and saves the result",
   expect(query.eq).toHaveBeenCalledWith("status", "scheduled");
   expect(query.lte).toHaveBeenCalledWith("scheduled_at", expect.any(String));
   expect(claimed.eq).toHaveBeenCalledWith("status", "scheduled");
+  expect(claimed.eq).toHaveBeenCalledWith("scheduled_at", post.scheduled_at);
   expect(getAccountProfile).toHaveBeenCalledWith("alice");
   expect(getScheduledInstagramAccount).toHaveBeenCalledWith("alice", "original-account");
   expect(refreshScheduledMediaUrl).toHaveBeenCalledWith("reference", "alice");
@@ -125,6 +126,15 @@ test("does not publish a post already claimed by another worker", async () => {
   expect(publishInstagramMedia).not.toHaveBeenCalled();
   expect(from).toHaveBeenCalledTimes(2);
   expect(getAccountProfile).not.toHaveBeenCalled();
+});
+
+test("a post moved or deleted after the due snapshot is not published at its old time", async () => {
+  const claimed = claim(null);
+  const res = await run();
+  expect(claimed.eq).toHaveBeenCalledWith("scheduled_at", post.scheduled_at);
+  expect(claimed.eq).toHaveBeenCalledWith("status", "scheduled");
+  expect(publishInstagramMedia).not.toHaveBeenCalled();
+  expect(res.json).toHaveBeenCalledWith({ ok: true, results: [] });
 });
 
 test("a Free or expired owner's claimed post fails without contacting Instagram", async () => {

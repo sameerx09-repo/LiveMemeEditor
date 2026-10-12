@@ -172,7 +172,14 @@ For Hobby, enable Supabase pg_cron/pg_net, create the Vault secret described in
 supabase/production-scheduler.sql, apply supabase/instagram-cron-configuration.sql,
 then supabase/production-scheduler.sql. It creates an INACTIVE hourly job aligned
 to Asia/Kolkata: 08:00, 09:00, etc. Set INSTAGRAM_SCHEDULER_MODE=external, a fresh activation cutoff and
-INSTAGRAM_CRON_SECRET in Vercel, redeploy, then activate the job in Supabase Cron.
+INSTAGRAM_CRON_SECRET in Vercel, redeploy, then install
+supabase/instagram-cron-controls.sql and activate with
+`select * from public.set_instagram_cron_enabled(true);`.
+This skips overdue queued posts instead of publishing old schedules. See
+SCHEDULER.md for the full one-time setup and saved on/off SQL commands. Pause
+with `select * from public.set_instagram_cron_enabled(false);`. Resume with the
+SQL function, not the dashboard Active switch, to skip posts missed while off.
+These admin controls affect all users; in-flight HTTP/publishing may still finish.
 Check net._http_response for HTTP status, not only cron.job_run_details: queueing
 an HTTP request is not proof that Instagram publishing succeeded.
 

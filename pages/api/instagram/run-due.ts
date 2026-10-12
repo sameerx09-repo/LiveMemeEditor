@@ -49,7 +49,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         const { data: claimed, error: claimError } = await admin.from("instagram_posts")
           .update({ status: "publishing", updated_at: new Date().toISOString() })
-          .eq("id", post.id).eq("status", "scheduled").select("id").maybeSingle();
+          .eq("id", post.id).eq("status", "scheduled")
+          .eq("scheduled_at", post.scheduled_at).select("id").maybeSingle();
         if (claimError) throw claimError;
         if (!claimed) return null;
         claimedByWorker = true;

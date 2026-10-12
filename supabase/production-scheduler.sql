@@ -18,7 +18,7 @@ select cron.schedule(
   '30 * * * *', -- UTC minute 30 is the top of each hour in India (UTC+05:30).
   $job$
     select net.http_post(
-      url := 'https://instantmemeeditandpost.online/api/instagram/run-due',
+      url := 'https://www.instantmemeeditandpost.online/api/instagram/run-due',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
         'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'clipmeme_production_cron_secret')
@@ -33,5 +33,6 @@ from cron.job where jobname = 'clipmeme-production-instagram';
 -- Default: 60-minute clock cadence in India. The job stays INACTIVE.
 select * from public.configure_instagram_cron(60, 'Asia/Kolkata');
 commit;
--- Activate in Supabase Cron dashboard ONLY after configuring a fresh production
--- INSTAGRAM_SCHEDULER_NOT_BEFORE cutoff, external mode and verifying the domain.
+-- Install instagram-cron-controls.sql, then use set_instagram_cron_enabled(true)
+-- ONLY after configuring a fresh production INSTAGRAM_SCHEDULER_NOT_BEFORE
+-- cutoff, external mode and verifying the domain. See SCHEDULER.md.

@@ -1,5 +1,5 @@
 import { IDBFactory } from "fake-indexeddb";
-import { clearExports, listExports, saveExport, linkScheduledClip, listScheduledClips } from "@/lib/export-history";
+import { clearExports, listExports, saveExport, linkScheduledClip, listScheduledClips, unlinkScheduledClip } from "@/lib/export-history";
 import type { ClipHistoryItem } from "@/lib/types";
 
 function clip(id: string, exportedAt = 1): ClipHistoryItem {
@@ -62,4 +62,18 @@ test("upgrading existing history to add links preserves saved videos", async () 
   const [restored]=await listExports("alice");
   expect(await (await fetch(restored.exportUrl!)).text()).toBe("existing-video");
   URL.revokeObjectURL(restored.exportUrl!);
+});
+
+test("removing a schedule reference preserves History, other schedules and other accounts", async () => {
+  await saveExport("alice",clip("one"),new Blob(["saved-video"]));
+  await linkScheduledClip("alice","same-post",clip("one"));
+  await linkScheduledClip("alice","other-post",clip("one"));
+  await linkScheduledClip("bob","same-post",clip("two"));
+  await unlinkScheduledClip("alice","same-post");
+  await unlinkScheduledClip("alice","same-post");
+  expect((await listScheduledClips("alice")).map(item=>item.postId)).toEqual(["other-post"]);
+  expect((await listScheduledClips("bob")).map(item=>item.postId)).toEqual(["same-post"]);
+  const [saved]=await listExports("alice");
+  expect(await (await fetch(saved.exportUrl!)).text()).toBe("saved-video");
+  URL.revokeObjectURL(saved.exportUrl!);
 });

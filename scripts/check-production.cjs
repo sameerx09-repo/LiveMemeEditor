@@ -7,7 +7,7 @@ const required = ['APP_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_A
 const errors = required.filter(key => !process.env[key]).map(key => `${key} is missing`);
 try {
   const app = new URL(process.env.APP_URL);
-  if (app.protocol !== 'https:' || app.hostname !== 'instantmemeeditandpost.online' || app.pathname !== '/') errors.push('APP_URL must be https://instantmemeeditandpost.online');
+  if (app.href !== 'https://www.instantmemeeditandpost.online/') errors.push('APP_URL must be https://www.instantmemeeditandpost.online');
   if (process.env.INSTAGRAM_REDIRECT_URI !== `${app.origin}/api/instagram/callback`) errors.push('Instagram callback must match the production domain exactly');
 } catch { errors.push('Production APP_URL is invalid'); }
 const mode = process.env.INSTAGRAM_SCHEDULER_MODE;
