@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, CircleAlert, LoaderCircle, LogOut, RefreshCw, UserRound } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import type { AccountProfile } from "@/lib/membership";
+import InstagramConnection from "@/components/Social/InstagramConnection";
 
 type Props = { userId: string; email: string; onSignOut: () => Promise<void> };
 
@@ -82,7 +83,7 @@ export default function UserProfile({ userId, email, onSignOut }: Props) {
       <ChevronDown size={13} aria-hidden="true" />
     </button>
     {open && <div id="user-profile-panel" role="dialog" aria-label="User profile"
-      className="absolute right-0 top-full z-[80] mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-[#383838] bg-[#181818] p-4 text-[#ddd] shadow-xl">
+      className="absolute right-0 top-full z-[80] mt-2 max-h-[calc(100dvh-6rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border border-[#383838] bg-[#181818] p-4 text-[#ddd] shadow-xl">
       <div className="font-semibold text-white">Account</div>
       <p className="mt-1 break-all text-[#aaa]">{accountEmail || "Signed in"}</p>
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#333] pt-3">
@@ -97,6 +98,7 @@ export default function UserProfile({ userId, email, onSignOut }: Props) {
       </div>
       {profile?.expiresAt && <p className="mt-2 text-[#aaa]">Valid until {new Date(profile.expiresAt).toLocaleDateString()}</p>}
       {error && <p role="alert" className="mt-2 text-[#ff9b9b]">Could not load membership. Please retry.</p>}
+      <InstagramConnection userId={userId} />
       <button type="button" disabled={signingOut} onClick={async () => {
         setSigningOut(true);
         try { await onSignOut(); } finally { setSigningOut(false); }

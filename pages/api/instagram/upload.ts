@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { requireAuth } from "@/lib/supabase-server";
+import { requireInstagramPro } from "@/lib/membership-server";
 import { getRequestBaseUrl, signInstagramMediaUrl, uploadInstagramMedia } from "@/lib/instagram";
 import { checkApiRateLimit } from "@/lib/api-rate-limit";
 import { isValidWebM } from "@/lib/webm-utils";
@@ -23,6 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const user = await requireAuth(req, res);
   if (!user) return;
+  if (!await requireInstagramPro(user.id, res)) return;
   if (process.env.VERCEL) return res.status(413).json({ error: "Use the direct storage upload endpoint for hosted video uploads" });
   if (!await checkApiRateLimit(user.id, "upload", res)) return;
   res.setHeader("Cache-Control", "no-store");

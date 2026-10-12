@@ -201,12 +201,13 @@ export async function getDefaultInstagramAccount(userId: string): Promise<Instag
     .select("id,user_id,ig_user_id,username,access_token,page_id")
     .eq("user_id", userId)
     .eq("provider", "instagram")
-    .order("created_at", { ascending: false })
+    .neq("access_token", "")
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error) throw error;
-  if (!data) return null;
+  if (!data?.access_token) return null;
 
   return {
     id: data.id,
@@ -225,17 +226,31 @@ export async function saveInstagramAccount(userId: string, account: {
   pageId?: string;
 }) {
   const admin = createAdminClient();
-  const { error } = await admin.from("social_accounts").upsert({
-    provider: "instagram",
-    user_id: userId,
-    ig_user_id: account.igUserId,
-    username: account.username,
-    page_id: account.pageId,
-    access_token: account.accessToken,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "provider,user_id,ig_user_id" });
+  const { error } = await admin.rpc("connect_instagram_account", {
+    p_user_id: userId,
+    p_ig_user_id: account.igUserId,
+    p_username: account.username,
+    p_page_id: account.pageId ?? null,
+    p_access_token: account.accessToken,
+  });
+
+  if (error) throw new Error("Could not save Instagram connection. Ask the administrator to check the Instagram connections database setup.");
+}
+
+export async function disconnectInstagramAccount(userId: string) {
+  const { error } = await createAdminClient().rpc("disconnect_instagram_account", { p_user_id: userId });
+  if (error) throw new Error("Could not disconnect Instagram. Please try again or ask the administrator to check the Instagram connections database setup.");
+}
+
+export async function getScheduledInstagramAccount(userId: string, accountId: string): Promise<InstagramAccount | null> {
+  const { data, error } = await createAdminClient().from("social_accounts")
+    .select("id,user_id,ig_user_id,username,access_token,page_id")
+    .eq("id", accountId).eq("user_id", userId).eq("provider", "instagram").maybeSingle();
 
   if (error) throw error;
+  if (!data?.access_token) return null;
+  return { id: data.id, userId: data.user_id, igUserId: data.ig_user_id,
+    username: data.username, accessToken: data.access_token, pageId: data.page_id };
 }
 
 export async function uploadInstagramMedia(userId: string, body: Buffer, contentType: string) {

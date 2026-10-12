@@ -19,10 +19,48 @@ Only a trusted backend/admin should grant or remove Pro, using Supabase's
 as provider identities. Never expose the service role to the browser, or create
 a client-accessible endpoint that accepts a requested plan.
 
-This change is a profile display, not a billing or feature-enforcement rollout.
-It does not disable existing editing, Instagram posting or scheduled jobs.
-The planned auto-trim and scheduling restrictions still need shared server-side
-entitlements and a payment/admin-grant policy before they can be enabled.
+## Enforced Features
+
+Instagram posting and scheduling are Pro-only. Free users can still edit, save
+to History, download clips, and connect Instagram. The editor disables posting
+and scheduling; the calendar remains readable but cannot accept new schedules.
+Instagram upload, publish, and schedule-creation APIs independently read fresh
+admin-controlled membership and return 403 for Free/expired Pro accounts. Lookup
+failures return 503 and do not upload, schedule, or publish. Extension clip
+transport is unchanged.
+
+The scheduled worker also checks membership after claiming each due post and
+before contacting Instagram. Free/expired owners' posts are marked failed with
+a Pro-required reason, not automatically retried after a later upgrade. The
+activation cutoff still excludes old posts. No existing schedules are changed
+by deploying alone; checks occur when the worker handles a due post.
+
+Billing and the planned Free auto-trim duration limit are not implemented yet.
+
+## Manual Free / Pro Grants
+
+In Supabase Authentication > Users, find the account's exact UUID. Until billing
+is added, an administrator can use the SQL Editor to grant permanent Pro:
+
+```sql
+update auth.users
+set raw_app_meta_data =
+  (coalesce(raw_app_meta_data, '{}'::jsonb) - 'plan_expires_at')
+  || '{"plan":"pro"}'::jsonb
+where id = 'REPLACE_WITH_USER_UUID'::uuid
+returning id, email, raw_app_meta_data->>'plan' as plan;
+```
+
+To set the same account back to Free, run the same statement with `"free"`
+instead of `"pro"`. Both preserve provider/other app metadata and remove any
+previous expiry. A placeholder UUID intentionally fails until replaced; verify
+the returned account. Do not change `raw_user_meta_data` or a `profiles.plan`
+column: neither grants access. These queries are admin-only, never browser code.
+Alternatively use the server-only Supabase Auth admin API described above.
+
+Reload the app or use Refresh membership to update the badge and controls.
+Server checks take effect on the next request even without refreshing the JWT.
+Changing a plan cannot stop a publish that has already been sent to Instagram.
 
 ## Social Signup (Not Yet Implemented)
 

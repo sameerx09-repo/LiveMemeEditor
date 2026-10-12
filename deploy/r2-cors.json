@@ -1,9 +1,16 @@
 [
   {
-    "AllowedOrigins": ["https://instantmemeeditandpost.online", "http://localhost:3000"],
+    "AllowedOrigins": ["https://www.instantmemeeditandpost.online", "https://instantmemeeditandpost.online", "http://localhost:3000"],
     "AllowedMethods": ["GET", "HEAD", "PUT"],
     "AllowedHeaders": ["Content-Type", "Range"],
     "ExposeHeaders": ["ETag", "Content-Length", "Content-Range"],
+    "MaxAgeSeconds": 3600
+  },
+  {
+    "AllowedOrigins": ["*"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["Content-Type"],
+    "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3600
   }
 ]

@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { requireAuth } from "@/lib/supabase-server";
+import { requireInstagramPro } from "@/lib/membership-server";
 import { createAdminClient, getDefaultInstagramAccount, getRequestBaseUrl } from "@/lib/instagram";
 import { createScheduledMediaReference, refreshScheduledMediaUrl } from "@/lib/instagram-scheduled-media";
 import { getInstagramSchedulerStatus } from "@/lib/instagram-scheduler-status";
@@ -14,6 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const user = await requireAuth(req, res);
   if (!user) return;
+  if (req.method === "POST" && !await requireInstagramPro(user.id, res)) return;
   if (req.method === "POST" && !await checkApiRateLimit(user.id, "schedule", res)) return;
 
   try {
@@ -36,7 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }) });
     }
 
-    const { mediaUrl, caption, scheduledAt } = req.body || {};
+    const { mediaUrl, caption, scheduledAt, igUserId } = req.body || {};
     if (!mediaUrl || typeof mediaUrl !== "string") return res.status(400).json({ error: "Missing mediaUrl" });
     if (!scheduledAt || typeof scheduledAt !== "string") return res.status(400).json({ error: "Missing scheduledAt" });
 
@@ -49,6 +51,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const account = await getDefaultInstagramAccount(user.id);
     if (!account) return res.status(409).json({ error: "Connect Instagram first" });
+    if (typeof igUserId !== "string" || igUserId !== account.igUserId) {
+      return res.status(409).json({ error: "Instagram connection changed. Refresh and confirm the account before scheduling." });
+    }
 
     const { data, error } = await admin
       .from("instagram_posts")

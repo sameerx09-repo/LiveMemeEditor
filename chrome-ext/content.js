@@ -305,8 +305,10 @@ async function sendClip(blob, btn, timerEl, onInvalidRecording) {
 
   // ── 1. Upload ────────────────────────────────────────────────────────────
   let clipId;
+  let uploadStage = "validate recording";
   try {
     btn.textContent = "⏳ Uploading…";
+    btn.title = "";
 
     const headerHex = await getBlobHeaderHex(blob);
     if (!blob.size || !isWebMHeaderHex(headerHex)) {
@@ -342,6 +344,8 @@ async function sendClip(blob, btn, timerEl, onInvalidRecording) {
       return;
     }
 
+    uploadStage = DIRECT_STORAGE_UPLOAD ? "prepare upload" : "relay upload";
+    console.info(`[ClipMeme] Upload stage: ${uploadStage}`, { bytes: blob.size });
     const uploadRes = await fetch(`${CLIPMEME_URL}/api/presign`, {
       method: DIRECT_STORAGE_UPLOAD ? "GET" : "POST",
       body: DIRECT_STORAGE_UPLOAD ? undefined : blob,
@@ -361,13 +365,16 @@ async function sendClip(blob, btn, timerEl, onInvalidRecording) {
       }
       throw new Error(`upload failed: ${uploadRes.status}${errorText ? ` ${errorText.slice(0, 160)}` : ""}`);
     }
+    uploadStage = "read upload ticket";
     const uploadData = await uploadRes.json();
     clipId = uploadData.clipId;
     if (DIRECT_STORAGE_UPLOAD) {
+      uploadStage = "storage upload";
+      console.info("[ClipMeme] Upload stage: storage upload", { bytes: blob.size, origin: location.origin });
       const stored = await fetch(uploadData.uploadUrl, { method: "PUT", body: blob, headers: { "Content-Type": "video/webm" } });
       if (!stored.ok) throw new Error(`Storage upload failed: ${stored.status}`);
     }
-    console.log("[ClipMeme] uploaded via relay, clipId:", clipId);
+    console.log(`[ClipMeme] uploaded ${DIRECT_STORAGE_UPLOAD ? "directly to storage" : "via relay"}, clipId:`, clipId);
   } catch (err) {
     if (isInvalidRecordingError(err)) {
       onInvalidRecording?.();
@@ -383,8 +390,13 @@ async function sendClip(blob, btn, timerEl, onInvalidRecording) {
     }
 
     // Upload itself failed — fall back to downloading the file
-    console.warn("[ClipMeme] Upload failed:", err.message);
-    btn.textContent = `⚠ ${err.message.slice(0, 30)}`;
+    const uploadError = `${uploadStage}: ${err.message}`;
+    console.warn("[ClipMeme] Upload failed:", uploadError);
+    if (uploadStage === "storage upload" && err.message === "Failed to fetch") {
+      console.info("[ClipMeme] Check R2 CORS permits PUT with Content-Type from this origin:", location.origin);
+    }
+    btn.textContent = `⚠ ${uploadError.slice(0, 30)}`;
+    btn.title = uploadError;
     btn.style.background = "rgba(255,152,0,.9)";
     const url = URL.createObjectURL(blob);
     Object.assign(document.createElement("a"), { href: url, download: "clipmeme-capture.webm" }).click();

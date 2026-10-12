@@ -4,15 +4,18 @@ import schedule from "@/pages/api/instagram/schedule";
 import status from "@/pages/api/instagram/scheduler-status";
 import { requireAuth } from "@/lib/supabase-server";
 import { createAdminClient } from "@/lib/instagram";
+import { requireInstagramPro } from "@/lib/membership-server";
 
 jest.mock("@/lib/supabase-server", () => ({ requireAuth: jest.fn() }));
 jest.mock("@/lib/instagram", () => ({ createAdminClient: jest.fn(), getDefaultInstagramAccount: jest.fn(), getRequestBaseUrl: jest.fn() }));
 jest.mock("@/lib/instagram-scheduled-media", () => ({ createScheduledMediaReference: jest.fn(), refreshScheduledMediaUrl: jest.fn() }));
+jest.mock("@/lib/membership-server", () => ({ requireInstagramPro: jest.fn() }));
 
 const keys = ["INSTAGRAM_SCHEDULER_ENABLED", "INSTAGRAM_SCHEDULER_MANAGED", "INSTAGRAM_SCHEDULER_MODE", "INSTAGRAM_CRON_SECRET", "VERCEL", "VERCEL_ENV", "CRON_SECRET", "INSTAGRAM_SCHEDULER_NOT_BEFORE", "INSTAGRAM_SCHEDULER_BATCH_SIZE"] as const;
 const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(requireInstagramPro).mockResolvedValue(true);
   for (const key of keys) delete process.env[key];
   jest.mocked(requireAuth).mockResolvedValue({ id: "alice" } as Awaited<ReturnType<typeof requireAuth>>);
 });

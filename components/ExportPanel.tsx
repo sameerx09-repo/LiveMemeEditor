@@ -235,7 +235,7 @@ export default function ExportPanel({ onExport, onExportQueued }: Props) {
       <InstagramPanel
         renderCurrent={onExport}
         canRender={!!sourceObjectURL && sourceDuration > 0 && duration >= 1 && !isLive && !exporting}
-        renderPrimaryAction={({ connected, canPost, working, onConnect, onPublish }) => (
+        renderPrimaryAction={({ connected, canPost, lockedReason, working, onConnect, onPublish }) => (
           <div className="grid grid-cols-2 gap-2 mb-3">
             <button
               onClick={onExport}
@@ -248,7 +248,7 @@ export default function ExportPanel({ onExport, onExportQueued }: Props) {
               onClick={connected ? onPublish : onConnect}
               disabled={working || (connected && !canPost)}
               className="min-w-0 flex items-center justify-center gap-1.5 py-3 bg-[#111] border border-[#2e2e2e] hover:border-[#ff4444] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-white font-bold text-sm transition-colors"
-              title={connected ? "Post current edit to Instagram" : "Connect Instagram"}
+              title={connected ? lockedReason || "Post current edit to Instagram" : "Connect Instagram"}
             >
               {connected ? <Send size={15} /> : <Camera size={15} />}
               <span className="text-xs">{connected ? "Post to Instagram" : "Connect Instagram"}</span>

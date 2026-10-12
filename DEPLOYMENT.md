@@ -2,7 +2,7 @@
 
 Target repository: https://github.com/sameerx09-repo/LiveMemeEditor
 
-Canonical domain: https://instantmemeeditandpost.online
+Canonical domain: https://www.instantmemeeditandpost.online
 
 Deployment preparation is not public-launch approval. Finish the open items in
 security_best_practices_report.md before admitting untrusted public users.
@@ -22,10 +22,32 @@ do not keep its interval timer running.
 ## 2. Database
 
 Apply supabase/instagram-posting.sql (if not already applied), then
-supabase/security-hardening.sql. Existing accounts/posts are retained. Verify
+supabase/security-hardening.sql, then supabase/instagram-connections.sql.
+The connections script adds server-only atomic connect/disconnect functions;
+run it before deploying the profile connection controls. Defining these
+functions does not disconnect accounts or change existing posts. Existing
+accounts/posts are retained. Verify
 ordinary authenticated clients cannot SELECT access_token and the service-role
 rate-limit RPC works. Production expensive routes fail closed without this RPC.
 These scripts have NOT been applied by deployment preparation.
+
+### Instagram Connections
+
+Users can open their top-right profile to view, connect, disconnect, or change
+their Instagram account. Connecting remains available on Free; posting and
+scheduling require Pro. Disconnect requires explicit confirmation, erases saved
+publishing tokens for that app user, and marks their queued Instagram posts as
+failed so reconnecting cannot silently replay them. Published/failed history
+and local saved clips remain intact. Switching accounts disconnects first and
+then starts the existing Instagram OAuth flow; cancellation leaves the user
+disconnected. Posts already publishing may still finish.
+
+This is a local app disconnect, not a Meta-wide permissions revocation or an
+account/data-deletion request. No remote Meta account is changed by disconnect.
+The worker rereads the specific connection for each claimed post rather than
+using a token from its initial due-post snapshot or falling back to another
+Instagram account. Manual publishing and scheduling reject a changed target
+account and ask the user to confirm again.
 
 ## 3. Environment
 
@@ -68,21 +90,32 @@ each environment.
 
 ## 4. Domain, Auth And Meta
 
-Add instantmemeeditandpost.online in Vercel Project Settings > Domains. Apply the
+Use www.instantmemeeditandpost.online as the canonical production domain. Add
+both www.instantmemeeditandpost.online and instantmemeeditandpost.online in
+Vercel Project Settings > Domains. Apply the
 EXACT DNS records Vercel displays at the domain's DNS provider; do not guess IPs
 or assume DNS ownership has already been verified. Wait for HTTPS to be valid.
-If adding www, redirect it to the apex domain; do not run two independent origins.
+Redirect the apex domain to www; do not run two independent origins. A Vercel
+redirect does not fix a missing DNS record: the apex must resolve first.
 
 Set Supabase Authentication > URL Configuration Site URL to
-https://instantmemeeditandpost.online and allow its auth redirects.
+https://www.instantmemeeditandpost.online and allow its auth redirects. Keep
+APP_URL and INSTAGRAM_REDIRECT_URI aligned with this same canonical origin.
 In Meta > Instagram > Set up Instagram business login > Business login settings,
 set OAuth redirect URI to:
 
-    https://instantmemeeditandpost.online/api/instagram/callback
+    https://www.instantmemeeditandpost.online/api/instagram/callback
 
 Privacy policy URL:
 
-    https://instantmemeeditandpost.online/privacy
+    https://www.instantmemeeditandpost.online/privacy
+
+The privacy page is public and must return 200 without signing in. Before Meta
+review, replace its dashboard-only contact reference with a confirmed public
+support/privacy email and ensure the described deletion process is operational.
+There is currently no /data-deletion page or deletion callback; do not submit
+that URL as a working endpoint. A privacy page alone does not complete Meta's
+data-deletion or app-review requirements.
 
 Open and sign in on this exact domain before Connect Instagram. Do not use the
 Instagram authorization URL as a redirect URI. App review/live-mode eligibility
@@ -106,6 +139,26 @@ Browser History is origin-local. Clips saved on localhost or the old tunnel do
 not automatically appear on the production domain. Download/import clips you
 need; existing scheduled media references stay server-side. Do not delete R2
 objects or database rows during deployment.
+
+### Extension Upload CORS
+
+The production extension obtains a short-lived upload URL from `/api/presign`,
+then PUTs the recording directly to R2 from the source page's origin (for example
+`https://www.bilibili.com`), not the editor's origin. A bucket without CORS blocks
+that browser upload even when R2 credentials and the signed URL are valid.
+
+Apply `deploy/r2-cors.json` in Cloudflare R2 > bucket > Settings > CORS Policy.
+Retain any additional existing rules. The first rule permits editor access on
+www, apex and localhost. The second permits PUT from any source website so the
+extension can capture across sites; it does not allow wildcard GET or DELETE.
+PUT still requires a valid, object-specific signed URL. Do not enable public
+bucket access or add R2 credentials to the extension. No app redeployment is
+needed to apply a bucket CORS policy; allow up to 30 seconds for propagation.
+
+Extension logs identify `prepare upload`, `read upload ticket` and `storage
+upload` separately without logging the token or signed URL. If storage still
+fails after CORS is set, inspect the failed PUT/OPTIONS status in the source
+tab's Network panel; do not share its signed query string.
 
 ## 6. Scheduling: Choose One
 
@@ -180,8 +233,10 @@ or activated by the code preparation.
 ## 7. Extension And Platform Limits
 
 Run `npm run extension:production`, then load dist/chrome-ext in Chrome. It uses
-the production domain and direct storage uploads. The original chrome-ext folder
-still targets localhost:3000; recording/cropping/tab capture logic is unchanged.
+`https://www.instantmemeeditandpost.online` and direct storage uploads. Sign in on
+that exact origin so the extension can receive its authenticated session. The
+original chrome-ext folder still targets localhost:3000;
+recording/cropping/tab capture logic is unchanged.
 Use only one extension build at a time and sign in to its matching editor origin.
 
 Normal editing, rendering, local History and stitching use browser FFmpeg/WASM.

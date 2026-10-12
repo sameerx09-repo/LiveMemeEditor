@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('node:fs');
 const path = require('node:path');
-const origin = 'https://instantmemeeditandpost.online';
+const origin = 'https://www.instantmemeeditandpost.online';
 const source = path.resolve(__dirname, '../chrome-ext');
 const destination = path.resolve(__dirname, '../dist/chrome-ext');
 fs.mkdirSync(destination, { recursive: true });

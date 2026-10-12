@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Camera, UploadCloud } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { INSTAGRAM_CONNECTION_CHANGED } from "@/lib/instagram-connection-events";
+import { CalendarClock, Camera, RefreshCw, UploadCloud } from "lucide-react";
+import { useInstagramAccess } from "@/lib/use-instagram-access";
 import { createClient } from "@/lib/supabase-browser";
 import { useStore } from "@/lib/store";
 import type { ClipHistoryItem } from "@/lib/types";
@@ -9,6 +11,7 @@ import { uploadInstagramClip } from "@/lib/instagram-upload-client";
 type AccountState = {
   connected: boolean;
   username: string | null;
+  igUserId: string | null;
 };
 
 type StatusKind = "idle" | "working" | "success" | "error";
@@ -19,6 +22,7 @@ type InstagramPanelProps = {
   renderPrimaryAction?: (action: {
     connected: boolean;
     canPost: boolean;
+    lockedReason: string;
     working: boolean;
     onConnect: () => void;
     onPublish: () => void;
@@ -30,9 +34,11 @@ function errorMessage(err: unknown) {
 }
 
 export default function InstagramPanel({ renderPrimaryAction, renderCurrent, canRender }: InstagramPanelProps) {
+  const access = useInstagramAccess();
   const history = useStore((s) => s.history);
   const latestExport = history.find((item) => item.exportUrl);
-  const [account, setAccount] = useState<AccountState>({ connected: false, username: null });
+  const [account, setAccount] = useState<AccountState>({ connected: false, username: null, igUserId: null });
+  const accountRequest = useRef(0);
   const [scheduler, setScheduler] = useState<{enabled: boolean; message: string} | null>(null);
   const [caption, setCaption] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
@@ -54,13 +60,17 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
   }
 
   async function loadAccount() {
+    const version = ++accountRequest.current;
     try {
-      const res = await fetch("/api/instagram/account", { headers: await authHeaders() });
+      const res = await fetch("/api/instagram/account", { headers: await authHeaders(), cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not load Instagram account");
-      setAccount({ connected: data.connected, username: data.username });
+      if (version === accountRequest.current) setAccount({ connected: data.connected, username: data.username, igUserId: data.igUserId });
     } catch (err: unknown) {
-      setStatus({ kind: "error", text: errorMessage(err) });
+      if (version === accountRequest.current) {
+        setAccount({ connected: false, username: null, igUserId: null });
+        setStatus({ kind: "error", text: errorMessage(err) });
+      }
     }
   }
 
@@ -73,14 +83,28 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
   }
 
   useEffect(() => {
+    const invalidateRequest = () => { ++accountRequest.current; };
     const id = window.setTimeout(() => {
       void loadAccount();
       void loadScheduler().catch(() => setScheduler({enabled: false, message: "Scheduler status unavailable"}));
     }, 0);
     const refresh = window.setInterval(() => {
+      void loadAccount();
       void loadScheduler().catch(() => setScheduler({enabled: false, message: "Scheduler status unavailable"}));
     }, 30000);
-    return () => { window.clearTimeout(id); window.clearInterval(refresh); };
+    const connectionChanged = () => {
+      invalidateRequest();
+      setAccount({ connected: false, username: null, igUserId: null });
+      void loadAccount();
+    };
+    window.addEventListener(INSTAGRAM_CONNECTION_CHANGED, connectionChanged);
+    window.addEventListener("focus", connectionChanged);
+    return () => {
+      invalidateRequest();
+      window.clearTimeout(id); window.clearInterval(refresh);
+      window.removeEventListener(INSTAGRAM_CONNECTION_CHANGED, connectionChanged);
+      window.removeEventListener("focus", connectionChanged);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -109,7 +133,9 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
 
   async function publishNow() {
     if (status.kind === "working") return;
+    setStatus({ kind: "working", text: "Checking membership..." });
     try {
+      if (!await access.refresh()) throw new Error("Instagram posting requires an active Pro membership. Check your account plan.");
       if (!account.connected) throw new Error("Connect Instagram first");
       setStatus({ kind: "working", text: "Rendering and saving current edit..." });
       const item = await renderCurrent();
@@ -122,7 +148,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
           ...(await authHeaders()),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mediaUrl, caption }),
+        body: JSON.stringify({ mediaUrl, caption, igUserId: account.igUserId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Publish failed");
@@ -135,7 +161,9 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
 
   async function schedulePost() {
     if (status.kind === "working") return;
+    setStatus({ kind: "working", text: "Checking membership..." });
     try {
+      if (!await access.refresh()) throw new Error("Instagram scheduling requires an active Pro membership. Check your account plan.");
       if (!account.connected) throw new Error("Connect Instagram first");
       if (!scheduledAt) throw new Error("Choose a schedule time");
       if (new Date(scheduledAt).getTime() <= Date.now()) throw new Error("Choose a future schedule time");
@@ -150,7 +178,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
           ...(await authHeaders()),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mediaUrl, caption, scheduledAt: new Date(scheduledAt).toISOString() }),
+        body: JSON.stringify({ mediaUrl, caption, igUserId: account.igUserId, scheduledAt: new Date(scheduledAt).toISOString() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Schedule failed");
@@ -170,11 +198,17 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
     <div className="mt-auto border-t border-[#1e1e1e] pt-3">
       {renderPrimaryAction?.({
         connected: account.connected,
-        canPost: canRender,
+        canPost: canRender && access.allowed,
+        lockedReason: access.message,
         working: status.kind === "working",
         onConnect: connectInstagram,
-        onPublish: () => { setStatus({ kind: "idle", text: "" }); setPostDialog(true); },
+        onPublish: () => { if (access.allowed) { setStatus({ kind: "idle", text: "" }); setPostDialog(true); } },
       })}
+
+      {!access.allowed && <div className="mb-3 flex items-center gap-2 text-xs text-[#aaa]">
+        <p role="status" className="min-w-0 flex-1">{access.message}</p>
+        <button type="button" onClick={() => void access.refresh()} aria-label="Refresh Instagram membership" title="Refresh membership" className="shrink-0 rounded p-1.5 hover:bg-[#303030]"><RefreshCw size={13} /></button>
+      </div>}
 
       <div className="flex items-center justify-between mb-2">
         <p className="text-[10px] text-[#555] font-bold uppercase tracking-wider">Instagram</p>
@@ -191,7 +225,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
           <Camera size={14} />
           Connect Instagram
         </button>
-      ) : (
+      ) : access.allowed ? (
         <div className="space-y-2">
           <p role="status" className={`text-[10px] ${scheduler?.enabled ? "text-[#78cfc8]" : "text-[#ffca28]"}`}>{scheduler?.message || "Checking scheduler..."}</p>
           <textarea
@@ -216,7 +250,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
           <div className="grid grid-cols-2 gap-1.5">
             <button
               onClick={schedulePost}
-              disabled={!canUseExport || !scheduler?.enabled || status.kind === "working"}
+              disabled={!access.allowed || !canUseExport || !scheduler?.enabled || status.kind === "working"}
               className="col-span-2 flex items-center justify-center gap-1.5 py-2 bg-[#111] border border-[#2e2e2e] hover:border-[#ffca28] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-[#ffca28] font-bold text-xs transition-colors"
             >
               <CalendarClock size={13} />
@@ -231,7 +265,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
             </span>
           </div>
         </div>
-      )}
+      ) : null}
 
       {status.text && (
         <p className={`mt-2 text-[10px] ${
@@ -253,7 +287,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
             {status.text && <p role="status" className="text-xs text-[#ddd]">{status.text}</p>}
             <div className="flex justify-end gap-2">
               <button disabled={status.kind === "working"} onClick={() => setPostDialog(false)} className="px-3 py-2 text-xs text-[#aaa]">Cancel</button>
-              <button disabled={status.kind === "working" || !canRender} onClick={() => void publishNow()} className="px-3 py-2 text-xs bg-[#c93640] rounded text-white disabled:opacity-40">{status.kind === "working" ? "Posting..." : "Post now"}</button>
+              <button disabled={!account.connected || !access.allowed || status.kind === "working" || !canRender} onClick={() => void publishNow()} className="px-3 py-2 text-xs bg-[#c93640] rounded text-white disabled:opacity-40">{status.kind === "working" ? "Posting..." : "Post now"}</button>
             </div>
           </div>
         </div>

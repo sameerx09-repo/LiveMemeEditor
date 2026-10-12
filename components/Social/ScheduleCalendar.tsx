@@ -6,10 +6,13 @@ import type { ClipHistoryItem } from "@/lib/types";
 import { calendarScheduleTime, isFutureSchedule } from "@/lib/calendar-time";
 import { linkScheduledClip, listScheduledClips, type ScheduledClipLink } from "@/lib/export-history";
 import { uploadInstagramClip } from "@/lib/instagram-upload-client";
+import { useInstagramAccess } from "@/lib/use-instagram-access";
+import { INSTAGRAM_CONNECTION_CHANGED } from "@/lib/instagram-connection-events";
 type Post = { id: string; caption: string; scheduled_at: string; status: string; preview_url?: string | null; error?: string };
 const local = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}T${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 const control = "border border-[#444] rounded px-3 py-2 text-xs disabled:opacity-40";
 export default function ScheduleCalendar() {
+  const access = useInstagramAccess();
   const history = useStore(s => s.history);
   const clips = history.filter(c => c.exportUrl);
   const [date,setDate] = useState(() => local(new Date()).slice(0,10));
@@ -46,12 +49,15 @@ export default function ScheduleCalendar() {
     const initial = window.setTimeout(() => void load(), 0);
     const clock = window.setInterval(() => setNow(Date.now()), 1000);
     const refresh = window.setInterval(() => void load(), 30000);
-    return () => {window.clearTimeout(initial);window.clearInterval(clock);window.clearInterval(refresh);};
+    const connectionChanged = () => { setDraft(null); setSelected(null); void load(); };
+    window.addEventListener(INSTAGRAM_CONNECTION_CHANGED, connectionChanged);
+    return () => {window.clearTimeout(initial);window.clearInterval(clock);window.clearInterval(refresh);window.removeEventListener(INSTAGRAM_CONNECTION_CHANGED, connectionChanged);};
   },[]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (highlighted) historyRef.current?.querySelector(`[data-history-clip-id="${CSS.escape(highlighted)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [highlighted]);
   function choose(clip: ClipHistoryItem,slot: Date, requestedAt: number) {
+    if (!access.allowed) { setError(access.message); return; }
     if (!scheduler?.enabled) { setError(scheduler?.message || "Scheduler status unavailable"); return; }
     const time = calendarScheduleTime(slot, view === "days", requestedAt);
     if (!time) { setError("Past time slots cannot be scheduled"); return; }
@@ -62,18 +68,19 @@ export default function ScheduleCalendar() {
     if (!isFutureSchedule(draft.time, Date.now())) {setError("Choose a future time");return;}
     setBusy(true);setError("");
     try {
+      if (!await access.refresh()) throw new Error("Instagram scheduling requires an active Pro membership. Check your account plan.");
       const worker = await request("/api/instagram/scheduler-status");
       setScheduler(worker);
       if (!worker.enabled) throw new Error(worker.message);
       const account = await request("/api/instagram/account");
-      if (!account.connected) throw new Error("Connect Instagram in the editor first");
+      if (!account.connected) throw new Error("Connect Instagram in your user profile first");
       const res = await fetch(draft.clip.exportUrl!);
       if (!res.ok) throw new Error("Saved clip is unavailable");
       const blob = await res.blob();
       const { data: { session } } = await createClient().auth.getSession();
       if (!session) throw new Error("Sign in to schedule posts");
       const mediaUrl = await uploadInstagramClip(blob, { Authorization: `Bearer ${session.access_token}` });
-      const result = await request("/api/instagram/schedule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mediaUrl,caption,scheduledAt:new Date(draft.time).toISOString()})});
+      const result = await request("/api/instagram/schedule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mediaUrl,caption,igUserId:account.igUserId,scheduledAt:new Date(draft.time).toISOString()})});
       try {
         const { data: { session } } = await createClient().auth.getSession();
         if (!session) throw new Error("Session ended");
@@ -98,7 +105,7 @@ export default function ScheduleCalendar() {
     <aside ref={historyRef} className="w-full md:w-64 shrink-0 overflow-auto border-b md:border-b-0 md:border-r border-[#333] p-4 flex md:block gap-3 md:space-y-3">
       <h2 className="text-sm font-semibold shrink-0">Saved clips</h2>
       {!clips.length && <p className="text-xs text-[#999]">No saved clips</p>}
-      {clips.map(c => <button key={c.id} data-history-clip-id={c.id} data-highlighted={highlighted === c.id} draggable={scheduler?.enabled === true} onDragStart={e => {e.dataTransfer.setData("application/x-clipmeme",c.id);e.dataTransfer.effectAllowed="copy";}} onClick={() => setSelected(c)} onMouseEnter={() => setHighlighted(c.id)} onMouseLeave={() => setHighlighted(null)} aria-pressed={selected?.id===c.id} className={`w-56 md:w-full shrink-0 p-2 flex gap-2 text-left border rounded transition-colors ${highlighted===c.id ? "border-[#53c6be] ring-1 ring-[#53c6be] bg-[#162625]" : selected?.id===c.id ? "border-red-400" : "border-[#333]"}`}>
+      {clips.map(c => <button key={c.id} data-history-clip-id={c.id} data-highlighted={highlighted === c.id} draggable={access.allowed && scheduler?.enabled === true} onDragStart={e => {e.dataTransfer.setData("application/x-clipmeme",c.id);e.dataTransfer.effectAllowed="copy";}} onClick={() => setSelected(c)} onMouseEnter={() => setHighlighted(c.id)} onMouseLeave={() => setHighlighted(null)} aria-pressed={selected?.id===c.id} className={`w-56 md:w-full shrink-0 p-2 flex gap-2 text-left border rounded transition-colors ${highlighted===c.id ? "border-[#53c6be] ring-1 ring-[#53c6be] bg-[#162625]" : selected?.id===c.id ? "border-red-400" : "border-[#333]"}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {c.thumbnail && <img src={c.thumbnail} alt="" className="w-16 h-12 rounded object-cover" />}
         <span className="min-w-0 text-xs"><span className="block truncate">{c.exportFileName || "Exported clip"}</span><span className="text-[#999]">{c.duration.toFixed(1)}s · {c.aspectRatio}</span></span>
@@ -110,18 +117,18 @@ export default function ScheduleCalendar() {
         <input aria-label="Calendar date" type="date" value={date} onChange={e => e.target.value && setDate(e.target.value)} className={`${control} bg-[#222]`}/>
         <button className={control} onClick={() => setDate(local(new Date()).slice(0,10))}>Today</button>
         <div role="group" aria-label="Interval" className="flex">{[["60","Hourly"],["30","30 min"],["days","Days"]].map(([v,label]) => <button key={v} aria-pressed={view===v} className={`${control} ${view===v ? "bg-[#444]" : ""}`} onClick={() => setView(v)}>{label}</button>)}</div>
-        <button title="Refresh schedule" className={control} onClick={() => void load()}><RefreshCw size={15}/></button>
+        <button title="Refresh schedule and membership" className={control} onClick={() => { void load(); void access.refresh(); }}><RefreshCw size={15}/></button>
         <span className="w-full text-xs text-[#999]">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
-        <p role="status" className={`w-full text-xs ${scheduler?.enabled ? "text-[#78cfc8]" : "text-[#ffca28]"}`}>{scheduler?.message || "Checking scheduler..."}</p>
+        <p role="status" className={`w-full text-xs ${access.allowed && scheduler?.enabled ? "text-[#78cfc8]" : "text-[#ffca28]"}`}>{access.message || scheduler?.message || "Checking scheduler..."}</p>
       </div>
       {error && !draft && <p role="alert" className="p-3 text-red-400 text-xs">{error}</p>}
       <div className={`flex-1 overflow-auto ${view === "days" ? "grid grid-cols-[repeat(7,minmax(180px,1fr))]" : ""}`}>
         {slots.map(({time,end}) => {
           const future = calendarScheduleTime(time, view === "days", now) !== null;
-          const available = future && scheduler?.enabled === true;
+          const available = access.allowed && future && scheduler?.enabled === true;
           const items = posts.filter(p => new Date(p.scheduled_at)>=time && new Date(p.scheduled_at)<end);
           return <div key={time.toISOString()} data-slot-start={time.toISOString()} data-slot-disabled={!available}
-            onDragOver={e => { if (scheduler?.enabled && calendarScheduleTime(time, view === "days", Date.now())) { e.preventDefault(); e.dataTransfer.dropEffect="copy"; } }}
+            onDragOver={e => { if (access.allowed && scheduler?.enabled && calendarScheduleTime(time, view === "days", Date.now())) { e.preventDefault(); e.dataTransfer.dropEffect="copy"; } }}
             onDrop={e => { e.preventDefault(); const clip=clips.find(c => c.id===e.dataTransfer.getData("application/x-clipmeme")); if (clip) choose(clip,time,Date.now()); }}
             className={`border-b border-r border-[#303030] p-2 ${available ? "hover:bg-[#202020]" : "bg-[#151515]"} ${view === "days" ? "min-h-64" : "flex gap-3 min-h-16"}`}>
             <button title={!future ? "Past time slot" : !scheduler?.enabled ? "Scheduler is off" : undefined} className={`w-20 shrink-0 self-start py-2 text-left text-xs ${available ? "text-[#aaa]" : "text-[#606060] cursor-not-allowed"}`} disabled={!selected || !available} onClick={() => selected && choose(selected,time,Date.now())}>{view === "days" ? time.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : time.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}</button>
@@ -167,7 +174,7 @@ export default function ScheduleCalendar() {
       <label className="block text-xs">Caption<textarea rows={4} maxLength={2200} value={caption} onChange={e => setCaption(e.target.value)} className="block w-full mt-2 p-2 bg-[#222] rounded"/></label>
       {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
       {!isFutureSchedule(draft.time,now) && <p role="alert" className="text-xs text-red-400">Choose a future date and time</p>}
-      <button className={`${control} w-full bg-[#a72c35]`} disabled={busy || !scheduler?.enabled || !isFutureSchedule(draft.time,now)} onClick={() => void save()}>{busy ? "Scheduling..." : "Schedule post"}</button>
+      <button className={`${control} w-full bg-[#a72c35]`} disabled={!access.allowed || busy || !scheduler?.enabled || !isFutureSchedule(draft.time,now)} onClick={() => void save()}>{busy ? "Scheduling..." : "Schedule post"}</button>
     </div></div>}
     {preview && <div role="dialog" aria-modal="true" aria-labelledby="preview-title" onKeyDown={e => { if (e.key === "Escape") setPreview(null); }} className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg border border-[#444] bg-[#191919] p-5 space-y-3">

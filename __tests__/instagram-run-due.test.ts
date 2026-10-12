@@ -1,21 +1,30 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import handler from "@/pages/api/instagram/run-due";
-import { createAdminClient, publishInstagramMedia } from "@/lib/instagram";
+import { createAdminClient, getScheduledInstagramAccount, publishInstagramMedia } from "@/lib/instagram";
 import { refreshScheduledMediaUrl } from "@/lib/instagram-scheduled-media";
+import { getAccountProfile } from "@/lib/membership-server";
 
-jest.mock("@/lib/instagram", () => ({ createAdminClient: jest.fn(), publishInstagramMedia: jest.fn() }));
+jest.mock("@/lib/instagram", () => ({ createAdminClient: jest.fn(), getScheduledInstagramAccount: jest.fn(), publishInstagramMedia: jest.fn() }));
 jest.mock("@/lib/instagram-scheduled-media", () => ({ refreshScheduledMediaUrl: jest.fn() }));
+jest.mock("@/lib/membership-server", () => ({
+  getAccountProfile: jest.fn(),
+  INSTAGRAM_PRO_REQUIRED: "Instagram posting and scheduling require Pro.",
+}));
 
 const originalSecret = process.env.INSTAGRAM_CRON_SECRET;
 const originalCutoff = process.env.INSTAGRAM_SCHEDULER_NOT_BEFORE;
 const platformKeys = ["VERCEL", "VERCEL_ENV", "INSTAGRAM_SCHEDULER_MODE", "CRON_SECRET", "INSTAGRAM_SCHEDULER_BATCH_SIZE"] as const;
 const originalPlatform = Object.fromEntries(platformKeys.map(key => [key, process.env[key]]));
-const post = { id: "post-one", user_id: "alice", caption: "Caption", media_url: "reference", scheduled_at: "2026-10-11T14:30:00Z", social_accounts: { ig_user_id: "ig-alice", access_token: "fixture" } };
+const post = { id: "post-one", user_id: "alice", social_account_id: "original-account", caption: "Caption", media_url: "reference", scheduled_at: "2026-10-11T14:30:00Z", social_accounts: { ig_user_id: "ig-alice", access_token: "fixture" } };
 let from: jest.Mock;
 let query: { select: jest.Mock; eq: jest.Mock; lte: jest.Mock; gte: jest.Mock; order: jest.Mock; limit: jest.Mock };
 
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(getAccountProfile).mockImplementation(async id => ({ id, email: "", plan: "pro", expiresAt: null }));
+  jest.mocked(getScheduledInstagramAccount).mockImplementation(async (id, accountId) => ({
+    id: accountId, userId: id, username: id, igUserId: `ig-${id}`, accessToken: id === "alice" ? "fixture" : "bob-fixture",
+  }));
   process.env.INSTAGRAM_CRON_SECRET = "test-secret";
   delete process.env.INSTAGRAM_SCHEDULER_NOT_BEFORE;
   for (const key of platformKeys) delete process.env[key];
@@ -104,6 +113,8 @@ test("publishes a claimed due post with a fresh media URL and saves the result",
   expect(query.eq).toHaveBeenCalledWith("status", "scheduled");
   expect(query.lte).toHaveBeenCalledWith("scheduled_at", expect.any(String));
   expect(claimed.eq).toHaveBeenCalledWith("status", "scheduled");
+  expect(getAccountProfile).toHaveBeenCalledWith("alice");
+  expect(getScheduledInstagramAccount).toHaveBeenCalledWith("alice", "original-account");
   expect(refreshScheduledMediaUrl).toHaveBeenCalledWith("reference", "alice");
   expect(publishInstagramMedia).toHaveBeenCalledWith(expect.objectContaining({ mediaUrl: "fresh-signed-url", caption: "Caption" }));
   expect(saved.update).toHaveBeenCalledWith(expect.objectContaining({ status: "published", instagram_media_id: "media-one" }));
@@ -113,6 +124,49 @@ test("does not publish a post already claimed by another worker", async () => {
   claim(null); await run();
   expect(publishInstagramMedia).not.toHaveBeenCalled();
   expect(from).toHaveBeenCalledTimes(2);
+  expect(getAccountProfile).not.toHaveBeenCalled();
+});
+
+test("a Free or expired owner's claimed post fails without contacting Instagram", async () => {
+  jest.mocked(getAccountProfile).mockResolvedValue({ id: "alice", email: "", plan: "free", expiresAt: null });
+  claim({ id: post.id }); const saved = save();
+  await run();
+  expect(publishInstagramMedia).not.toHaveBeenCalled();
+  expect(refreshScheduledMediaUrl).not.toHaveBeenCalled();
+  expect(saved.update).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", error: "Instagram posting and scheduling require Pro." }));
+});
+
+test("membership lookup failure cannot publish a claimed scheduled post", async () => {
+  jest.mocked(getAccountProfile).mockRejectedValue(new Error("Could not load your membership. Please try again."));
+  claim({ id: post.id }); const saved = save();
+  await run();
+  expect(publishInstagramMedia).not.toHaveBeenCalled();
+  expect(saved.update).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
+});
+
+test("a disconnected connection in a stale due-post snapshot cannot publish or fall back to a different account", async () => {
+  jest.mocked(getScheduledInstagramAccount).mockResolvedValue(null);
+  claim({ id: post.id }); const saved = save();
+  await run();
+  expect(getScheduledInstagramAccount).toHaveBeenCalledWith("alice", "original-account");
+  expect(publishInstagramMedia).not.toHaveBeenCalled();
+  expect(saved.update).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", error: expect.stringContaining("disconnected") }));
+});
+
+test("a Free owner cannot block a Pro owner's post in the same batch", async () => {
+  const bob = { ...post, id: "post-two", user_id: "bob", social_accounts: { ig_user_id: "ig-bob", access_token: "bob-fixture" } };
+  query.limit.mockResolvedValue({ data: [post, bob], error: null });
+  jest.mocked(getAccountProfile).mockImplementation(async id => ({ id, email: "", plan: id === "alice" ? "free" : "pro", expiresAt: null }));
+  claim({ id: post.id }); claim({ id: bob.id }); save(); save();
+  const res = await run();
+  expect(getAccountProfile).toHaveBeenCalledWith("alice");
+  expect(getAccountProfile).toHaveBeenCalledWith("bob");
+  expect(publishInstagramMedia).toHaveBeenCalledTimes(1);
+  expect(publishInstagramMedia).toHaveBeenCalledWith(expect.objectContaining({ igUserId: "ig-bob", accessToken: "bob-fixture" }));
+  expect(res.json).toHaveBeenCalledWith({ ok: true, results: [
+    { id: post.id, ok: false, error: "Instagram posting and scheduling require Pro." },
+    { id: bob.id, ok: true, mediaId: "media-one" },
+  ] });
 });
 test("a failed claim does not overwrite another worker's post", async () => {
   claim(null, { message: "Claim failed" }); await run();

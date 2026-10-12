@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { requireAuth } from "@/lib/supabase-server";
+import { requireInstagramPro } from "@/lib/membership-server";
 import { getDefaultInstagramAccount, publishInstagramMedia } from "@/lib/instagram";
 import { checkApiRateLimit } from "@/lib/api-rate-limit";
 import { createScheduledMediaReference } from "@/lib/instagram-scheduled-media";
@@ -16,11 +17,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const user = await requireAuth(req, res);
   if (!user) return;
+  if (!await requireInstagramPro(user.id, res)) return;
   if (!await checkApiRateLimit(user.id, "publish", res)) return;
   res.setHeader("Cache-Control", "no-store");
 
   try {
-    const { mediaUrl, caption } = req.body || {};
+    const { mediaUrl, caption, igUserId } = req.body || {};
     if (!mediaUrl || typeof mediaUrl !== "string") {
       return res.status(400).json({ error: "Missing mediaUrl" });
     }
@@ -29,6 +31,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const account = await getDefaultInstagramAccount(user.id);
     if (!account) return res.status(409).json({ error: "Connect Instagram first" });
+    if (typeof igUserId !== "string" || igUserId !== account.igUserId) {
+      return res.status(409).json({ error: "Instagram connection changed. Refresh and confirm the account before posting." });
+    }
 
     const published = await publishInstagramMedia({
       accessToken: account.accessToken,

@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { createAdminClient, publishInstagramMedia } from "@/lib/instagram";
+import { createAdminClient, getScheduledInstagramAccount, publishInstagramMedia } from "@/lib/instagram";
+import { getAccountProfile, INSTAGRAM_PRO_REQUIRED } from "@/lib/membership-server";
 import { refreshScheduledMediaUrl } from "@/lib/instagram-scheduled-media";
 import { getInstagramSchedulerBatchSize, getInstagramSchedulerCutoff, getInstagramSchedulerStatus } from "@/lib/instagram-scheduler-status";
 
@@ -27,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const cutoff = getInstagramSchedulerCutoff();
     let query = admin
       .from("instagram_posts")
-      .select("id,user_id,caption,media_url,scheduled_at,social_accounts!inner(ig_user_id,access_token)")
+      .select("id,user_id,social_account_id,caption,media_url,scheduled_at")
       .eq("status", "scheduled")
       .lte("scheduled_at", now);
     if (cutoff) query = query.gte("scheduled_at", cutoff);
@@ -43,7 +44,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const scheduledTime = new Date(post.scheduled_at).getTime();
       if (!Number.isFinite(scheduledTime) || scheduledTime > new Date(now).getTime() ||
           (cutoff && scheduledTime < new Date(cutoff).getTime())) return null;
-      const account = Array.isArray(post.social_accounts) ? post.social_accounts[0] : post.social_accounts;
       let claimedByWorker = false;
       let publishedMediaId: string | null = null;
       try {
@@ -53,10 +53,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (claimError) throw claimError;
         if (!claimed) return null;
         claimedByWorker = true;
+        if ((await getAccountProfile(post.user_id)).plan !== "pro") throw new Error(INSTAGRAM_PRO_REQUIRED);
+        // The initial due-post snapshot may predate a disconnect or account change.
+        const account = await getScheduledInstagramAccount(post.user_id, post.social_account_id);
+        if (!account) throw new Error("Instagram disconnected. Create a new schedule after reconnecting.");
         console.info(`[Instagram worker] Publishing ${post.id}`);
         const published = await publishInstagramMedia({
-          accessToken: account.access_token,
-          igUserId: account.ig_user_id,
+          accessToken: account.accessToken,
+          igUserId: account.igUserId,
           mediaUrl: refreshScheduledMediaUrl(post.media_url, post.user_id),
           caption: post.caption || "",
           mediaType: "REELS",
