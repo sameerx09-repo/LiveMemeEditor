@@ -8,6 +8,7 @@ import { linkScheduledClip, listScheduledClips, unlinkScheduledClip, type Schedu
 import { uploadInstagramClip } from "@/lib/instagram-upload-client";
 import { useInstagramAccess } from "@/lib/use-instagram-access";
 import { INSTAGRAM_CONNECTION_CHANGED } from "@/lib/instagram-connection-events";
+import SchedulePreviewVideo from "./SchedulePreviewVideo";
 type Post = { id: string; caption: string; scheduled_at: string; status: string; preview_url?: string | null; error?: string };
 const local = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}T${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 const control = "border border-[#444] rounded px-3 py-2 text-xs disabled:opacity-40";
@@ -296,7 +297,7 @@ export default function ScheduleCalendar() {
     {preview && <div role="dialog" aria-modal="true" aria-labelledby="preview-title" onKeyDown={e => dialogKeys(e,() => setPreview(null))} className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg border border-[#444] bg-[#191919] p-5 space-y-3">
         <div className="flex gap-3 justify-between items-start"><h2 id="preview-title" className="min-w-0 text-sm break-words">{previewClip?.exportFileName || previewLink?.name || "Scheduled Instagram reel"}</h2><button autoFocus title="Close preview" aria-label="Close preview" onClick={() => setPreview(null)} className="shrink-0 p-1"><X size={18}/></button></div>
-        {previewUrl ? <video crossOrigin="anonymous" controls playsInline preload="metadata" poster={previewClip?.thumbnail || previewLink?.thumbnail} src={previewUrl} className="w-full max-h-[50vh] bg-black rounded" /> : <p className="text-xs text-[#aaa]">Video preview unavailable</p>}
+        {previewUrl ? <SchedulePreviewVideo key={`${preview.id}:${previewUrl}`} src={previewUrl} poster={previewClip?.thumbnail || previewLink?.thumbnail} /> : <p className="text-xs text-[#aaa]">Video preview unavailable</p>}
         <p className="text-xs text-[#aaa]">{new Date(preview.scheduled_at).toLocaleString()} · {previewSkipped ? "Skipped" : preview.status}</p>
         <p className="text-sm text-[#ddd] whitespace-pre-wrap break-words">{preview.caption || "No caption"}</p>
         {preview.error && <p className="text-xs text-red-400">{preview.error}</p>}

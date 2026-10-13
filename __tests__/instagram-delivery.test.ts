@@ -1,5 +1,6 @@
 import { publishInstagramMedia, signInstagramMediaUrl } from "@/lib/instagram";
 import { getInstagramStorageDownloadUrl } from "@/lib/instagram-storage";
+import { InstagramProcessingTimeoutError, INSTAGRAM_PROCESSING_WAIT_MS } from "@/lib/instagram-processing";
 
 jest.mock("@/lib/instagram-storage", () => ({ getInstagramStorageDownloadUrl: jest.fn() }));
 const originalFetch = global.fetch;
@@ -12,6 +13,7 @@ beforeEach(() => {
   jest.mocked(getInstagramStorageDownloadUrl).mockResolvedValue("https://storage.test/private-signed-video");
 });
 afterEach(() => {
+  jest.useRealTimers();
   global.fetch = originalFetch;
   if (originalSecret === undefined) delete process.env.INSTAGRAM_STATE_SECRET;
   else process.env.INSTAGRAM_STATE_SECRET = originalSecret;
@@ -41,4 +43,86 @@ test("preserves processing details and container identity without leaking the me
   await expect(publishInstagramMedia(input())).rejects.toThrow("Instagram container container-one processing error: Cannot download video [media URL]");
   expect(mockedFetch).toHaveBeenCalledTimes(2);
   expect(new URL(mockedFetch.mock.calls[1][0]).searchParams.get("fields")).toBe("status_code,status");
+});
+
+test("waits past the old one-minute limit without recreating or publishing early", async () => {
+  jest.useFakeTimers();
+  const start = Date.now();
+  mockedFetch.mockImplementation(async (url: string) => {
+    if (url.endsWith("/media")) return response({ id: "container-one" });
+    if (url.endsWith("/media_publish")) return response({ id: "published-one" });
+    return response({ status_code: Date.now() - start >= 90000 ? "FINISHED" : "IN_PROGRESS" });
+  });
+  const pending = publishInstagramMedia(input());
+  await jest.advanceTimersByTimeAsync(60000);
+  expect(mockedFetch.mock.calls.filter(([url]) => url.endsWith("/media_publish"))).toHaveLength(0);
+  await jest.advanceTimersByTimeAsync(30000);
+  expect(await pending).toEqual({ creationId: "container-one", mediaId: "published-one" });
+  expect(mockedFetch.mock.calls.filter(([url]) => url.endsWith("/media"))).toHaveLength(1);
+  expect(mockedFetch.mock.calls.filter(([url]) => url.endsWith("/media_publish"))).toHaveLength(1);
+});
+
+test("processing deadline retains the container ID and never attempts publication", async () => {
+  jest.useFakeTimers();
+  mockedFetch.mockResolvedValueOnce(response({ id: "slow-container" }))
+    .mockResolvedValue(response({ status_code: "IN_PROGRESS" }));
+  const pending = publishInstagramMedia(input()).catch(error => error);
+  await jest.advanceTimersByTimeAsync(INSTAGRAM_PROCESSING_WAIT_MS);
+  const error = await pending;
+  expect(error).toBeInstanceOf(InstagramProcessingTimeoutError);
+  expect(error.creationId).toBe("slow-container");
+  expect(error.message).toContain("Publishing was not attempted");
+  expect(mockedFetch.mock.calls.filter(([url]) => url.endsWith("/media"))).toHaveLength(1);
+  expect(mockedFetch.mock.calls.filter(([url]) => url.endsWith("/media_publish"))).toHaveLength(0);
+});
+
+test("retries transient status reads, not container creation or publishing", async () => {
+  jest.useFakeTimers();
+  mockedFetch.mockResolvedValueOnce(response({ id: "container-one" }))
+    .mockRejectedValueOnce(new TypeError("fetch failed"))
+    .mockResolvedValueOnce({ ok: false, status: 503, json: async () => { throw new SyntaxError("HTML error page"); } })
+    .mockResolvedValueOnce(response({ status_code: "FINISHED" }))
+    .mockResolvedValueOnce(response({ id: "published-one" }));
+  const pending = publishInstagramMedia(input());
+  await jest.advanceTimersByTimeAsync(20000);
+  expect(await pending).toEqual({ creationId: "container-one", mediaId: "published-one" });
+  expect(mockedFetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+});
+
+test("authentication errors and expired containers fail without a publish retry", async () => {
+  mockedFetch.mockResolvedValueOnce(response({ id: "container-one" }))
+    .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: { message: "Token expired" } }) });
+  await expect(publishInstagramMedia(input())).rejects.toThrow("Token expired");
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+  mockedFetch.mockReset().mockResolvedValueOnce(response({ id: "container-two" }))
+    .mockResolvedValueOnce(response({ status_code: "EXPIRED" }));
+  await expect(publishInstagramMedia(input())).rejects.toThrow("processing expired");
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+});
+
+test("saves container identity before polling and does not proceed if persistence fails", async () => {
+  const save = jest.fn().mockRejectedValue(new Error("Database unavailable"));
+  mockedFetch.mockResolvedValueOnce(response({ id: "container-one" }));
+  await expect(publishInstagramMedia({ ...input(), onContainerCreated: save })).rejects.toThrow("Database unavailable");
+  expect(save).toHaveBeenCalledWith("container-one");
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+});
+
+test("same-slot videos can finish at different times without sharing containers", async () => {
+  jest.useFakeTimers();
+  const start = Date.now();
+  let created = 0;
+  mockedFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/media")) return response({ id: ++created === 1 ? "slow" : "fast" });
+    if (url.endsWith("/media_publish")) return response({ id: `${(init?.body as URLSearchParams).get("creation_id")}-published` });
+    const requiredTime = url.includes("/slow?") ? 120000 : 30000;
+    return response({ status_code: Date.now() - start >= requiredTime ? "FINISHED" : "IN_PROGRESS" });
+  });
+  const slow = publishInstagramMedia(input());
+  const fast = publishInstagramMedia(input());
+  await jest.advanceTimersByTimeAsync(120000);
+  expect(await slow).toEqual({ creationId: "slow", mediaId: "slow-published" });
+  expect(await fast).toEqual({ creationId: "fast", mediaId: "fast-published" });
+  expect(created).toBe(2);
+  expect(mockedFetch.mock.calls.filter(([url]) => url.endsWith("/media_publish"))).toHaveLength(2);
 });

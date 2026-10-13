@@ -3,6 +3,7 @@ import { createAdminClient, getScheduledInstagramAccount, publishInstagramMedia 
 import { getAccountProfile, INSTAGRAM_PRO_REQUIRED } from "@/lib/membership-server";
 import { refreshScheduledMediaUrl } from "@/lib/instagram-scheduled-media";
 import { getInstagramSchedulerBatchSize, getInstagramSchedulerCutoff, getInstagramSchedulerStatus } from "@/lib/instagram-scheduler-status";
+import { InstagramProcessingTimeoutError } from "@/lib/instagram-processing";
 
 export const config = { maxDuration: 300 };
 
@@ -65,6 +66,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           mediaUrl: refreshScheduledMediaUrl(post.media_url, post.user_id),
           caption: post.caption || "",
           mediaType: "REELS",
+          onContainerCreated: async creationId => {
+            const { error } = await admin.from("instagram_posts")
+              .update({ instagram_creation_id: creationId, updated_at: new Date().toISOString() }).eq("id", post.id);
+            if (error) throw error;
+          },
         });
         publishedMediaId = published.mediaId;
         const { error: saveError } = await admin.from("instagram_posts").update({
@@ -89,6 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const { error: saveError } = await admin.from("instagram_posts").update({
               status: "failed",
               error: errorMessage(err),
+              ...(err instanceof InstagramProcessingTimeoutError ? { instagram_creation_id: err.creationId } : {}),
               updated_at: new Date().toISOString(),
             }).eq("id", post.id);
             if (saveError) throw saveError;

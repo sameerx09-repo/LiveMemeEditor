@@ -5,6 +5,7 @@ import DrawSelection from "./DrawSelection";
 import CaptureModal from "./CaptureModal";
 
 interface Props {
+  active?: boolean;
   captureStream: MediaStream | null;
   onCapture: (stream: MediaStream) => void;
   videoRef?: React.RefObject<HTMLVideoElement | null>;
@@ -12,7 +13,7 @@ interface Props {
 
 const SPEEDS = [0.5, 1, 1.25, 1.5, 2];
 
-export default function VideoStage({ captureStream, onCapture, videoRef: externalRef }: Props) {
+export default function VideoStage({ active = true, captureStream, onCapture, videoRef: externalRef }: Props) {
   const internalRef = useRef<HTMLVideoElement>(null);
   const videoRef = externalRef || internalRef;
   const [showCaptureModal, setShowCaptureModal] = useState(false);
@@ -51,20 +52,22 @@ export default function VideoStage({ captureStream, onCapture, videoRef: externa
     if (!v) return;
     if (captureStream) {
       v.srcObject = captureStream;
-      v.play().catch(() => {});
+      if (active) v.play().catch(() => {});
     } else {
       // Stream ended — clear srcObject so a blob src (if any) can play
       v.srcObject = null;
     }
-  }, [captureStream]);
+  }, [captureStream, active]);
 
   // Sync play/pause
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || !sourceObjectURL) return;
+    if (!v) return;
+    if (!active) { v.pause(); return; }
+    if (!sourceObjectURL) return;
     if (playing) v.play().catch(() => {});
     else v.pause();
-  }, [playing, sourceObjectURL]);
+  }, [playing, sourceObjectURL, active]);
 
   // Sync rate
   useEffect(() => {
@@ -182,7 +185,7 @@ export default function VideoStage({ captureStream, onCapture, videoRef: externa
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onSeeked={handleSeeked}
-        onPlay={() => setPlaying(true)}
+        onPlay={() => { if (active) setPlaying(true); else {videoRef.current?.pause();setPlaying(false);} }}
         onPause={() => setPlaying(false)}
         playsInline
       />

@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getR2Client, R2_BUCKET } from "@/lib/r2";
 import { createInstagramOAuthState } from "@/lib/instagram-oauth";
 import { getInstagramStorageDownloadUrl } from "@/lib/instagram-storage";
+import { InstagramProcessingTimeoutError, INSTAGRAM_PROCESSING_POLL_MS, INSTAGRAM_PROCESSING_WAIT_MS } from "@/lib/instagram-processing";
 export { readInstagramOAuthState } from "@/lib/instagram-oauth";
 
 const GRAPH_VERSION = process.env.INSTAGRAM_GRAPH_VERSION || "v24.0";
@@ -55,6 +56,7 @@ export type InstagramPublishInput = {
   mediaUrl: string;
   caption?: string;
   mediaType?: "REELS" | "VIDEO" | "IMAGE";
+  onContainerCreated?: (creationId: string) => Promise<void>;
 };
 
 export function getInstagramRedirectUri(req?: { headers: { host?: string } }): string {
@@ -340,6 +342,7 @@ export async function publishInstagramMedia(input: InstagramPublishInput) {
     throw new Error(createData.error?.message || "Instagram media container creation failed");
   }
 
+  await input.onContainerCreated?.(String(createData.id));
   await waitForContainer(input.accessToken, createData.id);
 
   const publishRes = await fetch(`${graphBase}/${input.igUserId}/media_publish`, {
@@ -364,17 +367,28 @@ async function waitForContainer(accessToken: string, creationId: string) {
     fields: "status_code,status",
   });
 
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const res = await fetch(`${getGraphBase()}/${creationId}?${params.toString()}`, { signal: AbortSignal.timeout(10000) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || "Could not check Instagram container status");
-    if (data.status_code === "FINISHED") return;
-    if (data.status_code === "ERROR" || data.status_code === "EXPIRED") {
-      const detail = typeof data.status === "string" ? data.status.replace(/https?:\/\/\S+/g, "[media URL]").slice(0, 500) : "";
-      throw new Error(`Instagram container ${creationId} processing ${String(data.status_code).toLowerCase()}${detail ? `: ${detail}` : ""}`);
+  const deadline = Date.now() + INSTAGRAM_PROCESSING_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${getGraphBase()}/${creationId}?${params.toString()}`, {
+        signal: AbortSignal.timeout(Math.max(1, Math.min(10000, deadline - Date.now()))),
+      });
+      const transientResponse = res.status === 429 || res.status >= 500;
+      const data = transientResponse ? {} : await res.json();
+      if (!res.ok && !transientResponse) throw new Error(data.error?.message || "Could not check Instagram container status");
+      if (res.ok && data.status_code === "FINISHED") return;
+      if (res.ok && (data.status_code === "ERROR" || data.status_code === "EXPIRED")) {
+        const detail = typeof data.status === "string" ? data.status.replace(/https?:\/\/\S+/g, "[media URL]").slice(0, 500) : "";
+        throw new Error(`Instagram container ${creationId} processing ${String(data.status_code).toLowerCase()}${detail ? `: ${detail}` : ""}`);
+      }
+      if (res.ok && data.status_code === "PUBLISHED") throw new Error("This Instagram container is already published. Check Instagram before taking further action.");
+    } catch (error) {
+      // Only status GETs may be retried. Never repeat creation or media_publish POSTs.
+      if (!(error instanceof TypeError) && !(error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))) throw error;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(INSTAGRAM_PROCESSING_POLL_MS, remaining)));
   }
 
-  throw new Error("Instagram video is still processing; try again shortly");
+  throw new InstagramProcessingTimeoutError(creationId);
 }

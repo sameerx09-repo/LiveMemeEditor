@@ -10,6 +10,7 @@ import { generateId, detectPlatform } from "@/lib/utils";
 import type { ClipHistoryItem } from "@/lib/types";
 import { createClient } from "@/lib/supabase-browser";
 import UserProfile from "@/components/UserProfile";
+import { isEditorShortcutAllowed } from "@/lib/editor-shortcuts";
 
 // Dynamic imports (client-only)
 const ModeSwitch = dynamic(() => import("@/components/ModeSwitch"), { ssr: false });
@@ -128,6 +129,7 @@ export default function Home() {
   const overlays = useStore((s) => s.overlays);
   const aspectRatio = useStore((s) => s.aspectRatio);
   const setExporting = useStore((s) => s.setExporting);
+  const exporting = useStore((s) => s.exporting);
   const setExportProgress = useStore((s) => s.setExportProgress);
   const addToHistory = useStore((s) => s.addToHistory);
   const muteAudio = useStore((s) => s.muteAudio);
@@ -273,6 +275,7 @@ export default function Home() {
 
   // Function declaration — hoisted, no TDZ possible regardless of webpack ordering
   async function handleExport() {
+    if (workspaceTab !== "editor") return;
     const v = videoRef.current;
     const { clip, overlays, aspectRatio, muteAudio, mode, sourceFile, fillMode, cropZoom, playbackRate } = useStore.getState();
 
@@ -522,6 +525,7 @@ export default function Home() {
 
   // Export all queued segments — renders each to canvas, stitches via /api/stitch, remuxes to MP4
   async function handleExportQueued() {
+    if (workspaceTab !== "editor") return;
     const v = videoRef.current;
     const { queuedSegments, aspectRatio, muteAudio, mode, sourceFile, fillMode, playbackRate } =
       useStore.getState();
@@ -766,7 +770,7 @@ export default function Home() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === "TEXTAREA" || (e.target as HTMLElement).tagName === "INPUT") return;
+      if (!isEditorShortcutAllowed(e, workspaceTab === "editor", useStore.getState().exporting)) return;
       const v = videoRef.current;
       if (!v) return;
 
@@ -805,7 +809,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [workspaceTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -821,7 +825,9 @@ export default function Home() {
             Clip<span className="text-[#ff4444]">MemeEditor</span>
           </div>
           <div className="flex gap-2 ml-4" role="tablist" aria-label="Workspace">
-            {(["editor", "schedule"] as const).map(tab => <button key={tab} role="tab" aria-selected={workspaceTab === tab} onClick={() => setWorkspaceTab(tab)} className={`px-3 py-1.5 text-xs rounded border ${workspaceTab === tab ? "border-[#ff4444] text-white" : "border-[#333] text-[#999]"}`}>{tab === "editor" ? "Editor" : "Schedule"}</button>)}
+            {(["editor", "schedule"] as const).map(tab => <button key={tab} role="tab" disabled={exporting} aria-selected={workspaceTab === tab} onClick={() => {
+              videoRef.current?.pause();setPlaying(false);setWorkspaceTab(tab);
+            }} className={`px-3 py-1.5 text-xs rounded border disabled:opacity-40 ${workspaceTab === tab ? "border-[#ff4444] text-white" : "border-[#333] text-[#999]"}`}>{tab === "editor" ? "Editor" : "Schedule"}</button>)}
           </div>
           <div className="flex-1" />
           {userId && (
@@ -837,11 +843,12 @@ export default function Home() {
 
         {/* ── Main layout: left (video+timeline) + right (tools+preview) ── */}
         {workspaceTab === "schedule" && <ScheduleCalendar />}
-        <div className={`${workspaceTab === "editor" ? "flex" : "hidden"} flex-1 overflow-hidden`}>
+        <div inert={workspaceTab !== "editor"} aria-hidden={workspaceTab !== "editor"} className={`${workspaceTab === "editor" ? "flex" : "hidden"} flex-1 overflow-hidden`}>
           {/* LEFT — video stage + timeline */}
           <div className="flex flex-col gap-2 p-3 flex-1 overflow-hidden">
             <div className="flex-1 min-h-0 relative">
               <VideoStage
+                active={workspaceTab === "editor"}
                 captureStream={captureStream}
                 onCapture={handleCapture}
                 videoRef={videoRef}
@@ -904,7 +911,7 @@ export default function Home() {
             <div className="shrink-0 border-t border-[#1a1a1a] px-3 py-2">
               <p className="text-[10px] text-[#555] font-bold uppercase tracking-wider mb-2">Preview</p>
               <div className="flex justify-center bg-[#111] rounded-xl p-2">
-                <PreviewCanvas videoRef={videoRef} width={140} />
+                <PreviewCanvas active={workspaceTab === "editor"} videoRef={videoRef} width={140} />
               </div>
             </div>
           </div>

@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
 import { getAspectDimensions } from "@/lib/utils";
+import { isEditorShortcutAllowed } from "@/lib/editor-shortcuts";
 
 interface Props {
+  active?: boolean;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   width: number;
 }
@@ -15,7 +17,7 @@ const FONT_MAP: Record<string, string> = {
   HEADLINE: "800 22px Arial, sans-serif",
 };
 
-export default function PreviewCanvas({ videoRef, width }: Props) {
+export default function PreviewCanvas({ active = true, videoRef, width }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -40,6 +42,7 @@ export default function PreviewCanvas({ videoRef, width }: Props) {
   // Delete/Backspace key removes selected overlay
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!isEditorShortcutAllowed(e, active, useStore.getState().exporting)) return;
       if ((e.key === "Delete" || e.key === "Backspace") && selectedRef.current) {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -50,7 +53,7 @@ export default function PreviewCanvas({ videoRef, width }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [removeOverlay, selectOverlay]);
+  }, [active, removeOverlay, selectOverlay]);
 
   const { width: cw, height: ch } = getAspectDimensions(aspectRatio, width);
 

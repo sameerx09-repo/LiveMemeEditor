@@ -3,6 +3,7 @@ import handler from "@/pages/api/instagram/run-due";
 import { createAdminClient, getScheduledInstagramAccount, publishInstagramMedia } from "@/lib/instagram";
 import { refreshScheduledMediaUrl } from "@/lib/instagram-scheduled-media";
 import { getAccountProfile } from "@/lib/membership-server";
+import { InstagramProcessingTimeoutError } from "@/lib/instagram-processing";
 
 jest.mock("@/lib/instagram", () => ({ createAdminClient: jest.fn(), getScheduledInstagramAccount: jest.fn(), publishInstagramMedia: jest.fn() }));
 jest.mock("@/lib/instagram-scheduled-media", () => ({ refreshScheduledMediaUrl: jest.fn() }));
@@ -126,6 +127,25 @@ test("does not publish a post already claimed by another worker", async () => {
   expect(publishInstagramMedia).not.toHaveBeenCalled();
   expect(from).toHaveBeenCalledTimes(2);
   expect(getAccountProfile).not.toHaveBeenCalled();
+});
+
+test("persists the new container before the worker publishes", async () => {
+  claim({ id: post.id }); const container = save(); const result = save();
+  jest.mocked(publishInstagramMedia).mockImplementationOnce(async input => {
+    await input.onContainerCreated?.("container-one");
+    return { creationId: "container-one", mediaId: "media-one" };
+  });
+  await run();
+  expect(container.update).toHaveBeenCalledWith(expect.objectContaining({ instagram_creation_id: "container-one" }));
+  expect(result.update).toHaveBeenCalledWith(expect.objectContaining({ status: "published" }));
+});
+
+test("a processing timeout retains identity and is not automatically requeued", async () => {
+  claim({ id: post.id }); const failed = save();
+  jest.mocked(publishInstagramMedia).mockRejectedValueOnce(new InstagramProcessingTimeoutError("slow-container"));
+  await run();
+  expect(failed.update).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", instagram_creation_id: "slow-container" }));
+  expect(publishInstagramMedia).toHaveBeenCalledTimes(1);
 });
 
 test("a post moved or deleted after the due snapshot is not published at its old time", async () => {
