@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Welcome to ClipGrab</title>
+  <link rel="stylesheet" href="welcome.css" />
+  <script src="welcome.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" data-path="/" href="http://localhost:3000/" target="_blank" rel="noopener">Clip<span>MemeEditor</span></a><span class="installed">Extension installed</span></header>
+  <main>
+    <p class="eyebrow">WELCOME</p>
+    <h1>ClipGrab</h1>
+    <section aria-labelledby="account-heading">
+      <div class="section-heading"><h2 id="account-heading">Your account</h2><button id="refresh" type="button">Check connection</button></div>
+      <div class="account" aria-live="polite" aria-atomic="true">
+        <span id="indicator" class="indicator" aria-hidden="true"></span>
+        <div class="account-details"><p id="status">Checking connection...</p><p id="detail">Loading your account</p></div>
+        <span id="plan" class="plan" hidden></span>
+      </div>
+      <div class="actions">
+        <a id="signin" class="primary" data-path="/login" href="http://localhost:3000/login" target="_blank" rel="noopener">Sign in on website</a>
+        <a id="editor" class="secondary" data-path="/" href="http://localhost:3000/" target="_blank" rel="noopener">Open editor</a>
+      </div>
+    </section>
+  </main>
+  <footer><span>ClipGrab <span id="version"></span></span><a data-path="/privacy" href="http://localhost:3000/privacy" target="_blank" rel="noopener">Privacy policy</a></footer>
+</body>
+</html>

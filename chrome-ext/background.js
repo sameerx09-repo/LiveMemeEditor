@@ -1,5 +1,9 @@
 const CLIPMEMEEDITOR_URL = "http://localhost:3000";
 
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === "install") chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html") });
+});
+
 // When auth token is stored/refreshed, tell all content scripts so pending clips can retry
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.clipmeme_auth_token?.newValue) {

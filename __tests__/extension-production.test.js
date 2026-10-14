@@ -33,6 +33,10 @@ test("production permissions, auth bridges, popup and editor navigation use the 
   expect(output.get("background.js")).toContain(`const CLIPMEMEEDITOR_URL = "${origin}";`);
   expect(output.get("content.js")).toContain(`const CLIPMEME_URL = "${origin}";`);
   expect(output.get("content.js")).toContain("const DIRECT_STORAGE_UPLOAD = true;");
+  expect(output.get("welcome.js")).toContain(`const WEBSITE_URL = "${origin}";`);
+  expect(output.get("welcome.html")).toContain(`href="${origin}/login"`);
+  expect(output.get("welcome.html")).toContain(`href="${origin}/privacy"`);
+  expect(output.has("welcome.css")).toBe(true);
   for (const content of output.values()) {
     if (typeof content === "string") {
       expect(content).not.toContain("http://localhost:3000");
@@ -57,7 +61,7 @@ test("production background only opens editor links on the configured origin", (
   const create = jest.fn();
   const chrome = {
     storage: { onChanged: { addListener: jest.fn() } },
-    runtime: { id: "extension-fixture", onMessage: { addListener: handler => { receive = handler; } } },
+    runtime: { id: "extension-fixture", onInstalled: { addListener: jest.fn() }, onMessage: { addListener: handler => { receive = handler; } } },
     tabs: { create },
   };
   vm.runInNewContext(buildInMemory().get("background.js"), { chrome });
