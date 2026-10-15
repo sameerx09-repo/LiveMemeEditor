@@ -88,6 +88,7 @@ export default function Home() {
       setUserEmail(user.email ?? null);
       currentUserRef.current = user.id;
       setUserId(user.id);
+      if (new URLSearchParams(window.location.search).get("workspace") === "schedule") setWorkspaceTab("schedule");
       try {
         const { listExports } = await import("@/lib/export-history");
         const saved = await listExports(user.id);

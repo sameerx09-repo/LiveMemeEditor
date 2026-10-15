@@ -4,6 +4,7 @@ import Head from "next/head";
 import type { GetServerSideProps } from "next";
 import { createClient } from "@/lib/supabase-browser";
 import { isSignupEnabled } from "@/lib/auth-config";
+import { safeReturnTo } from "@/lib/manual-posts";
 
 type LoginProps = { signupEnabled: boolean };
 
@@ -41,7 +42,7 @@ export default function LoginPage({ signupEnabled = false }: LoginProps) {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        router.replace("/");
+        router.replace(safeReturnTo(router.query.returnTo));
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not sign in. Please try again.");
