@@ -148,7 +148,14 @@ export async function discoverInstagramAccount(accessToken: string) {
     });
     const res = await fetch(`${getGraphBase()}/me?${params.toString()}`);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || "Could not load Instagram account");
+    if (!res.ok) {
+      console.error("[Instagram connect] account lookup rejected", {
+        status:res.status,
+        code:typeof data.error?.code==="number"?data.error.code:undefined,
+        subcode:typeof data.error?.error_subcode==="number"?data.error.error_subcode:undefined,
+      });
+      throw new Error(data.error?.message || "Could not load Instagram account");
+    }
     if (!data.user_id && !data.id) throw new Error("No Instagram professional account was found");
 
     return {

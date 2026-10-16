@@ -3,10 +3,13 @@ import { ChevronDown, CircleAlert, LoaderCircle, LogOut, RefreshCw, UserRound } 
 import { createClient } from "@/lib/supabase-browser";
 import type { AccountProfile } from "@/lib/membership";
 import InstagramConnection from "@/components/Social/InstagramConnection";
+import { useRouter } from "next/router";
 
 type Props = { userId: string; email: string; onSignOut: () => Promise<void> };
 
 export default function UserProfile({ userId, email, onSignOut }: Props) {
+  const router=useRouter();
+  const connectionError=typeof router.query.instagram_error==="string"?router.query.instagram_error.slice(0,400):"";
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState<AccountProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,6 +101,7 @@ export default function UserProfile({ userId, email, onSignOut }: Props) {
       </div>
       {profile?.expiresAt && <p className="mt-2 text-[#aaa]">Valid until {new Date(profile.expiresAt).toLocaleDateString()}</p>}
       {error && <p role="alert" className="mt-2 text-[#ff9b9b]">Could not load membership. Please retry.</p>}
+      {connectionError && <p role="alert" className="mt-3 break-words text-[#ff9b9b]">Instagram connection was not saved: {connectionError}</p>}
       <InstagramConnection userId={userId} />
       <button type="button" disabled={signingOut} onClick={async () => {
         setSigningOut(true);

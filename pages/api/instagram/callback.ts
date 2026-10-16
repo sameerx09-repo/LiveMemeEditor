@@ -17,7 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== "GET") return res.status(405).end();
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
-
+  let stage="validation";
   try {
     const redirectUri = getInstagramRedirectUri(req);
     // State must belong to this browser and the still-authenticated initiating account.
@@ -28,12 +28,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const code = req.query.code;
     if (!code || Array.isArray(code)) throw new Error("Missing OAuth code");
 
+    stage="token_exchange";
     const accessToken = await exchangeCodeForToken(code, redirectUri);
+    stage="account_lookup";
     const account = await discoverInstagramAccount(accessToken);
 
+    stage="save_connection";
     await saveInstagramAccount(userId, { ...account, accessToken });
     res.redirect("/?instagram=connected");
   } catch (err: unknown) {
-    res.redirect(`/?instagram_error=${encodeURIComponent(errorMessage(err))}`);
+    // Never log OAuth codes, state, tokens, request URLs, or raw error objects.
+    console.error("[Instagram connect] callback failed", { stage });
+    res.redirect(`/?instagram_error=${encodeURIComponent(errorMessage(err))}&instagram_stage=${stage}`);
   }
 }

@@ -35,6 +35,18 @@ test("normal callback links the authorized account and consumes the browser cook
   expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", [expect.stringContaining("Max-Age=0")]);
   expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", [expect.stringContaining("HttpOnly")]);
 });
+
+test("profile lookup failure is identified without saving or logging credentials",async()=>{
+  const log=jest.spyOn(console,"error").mockImplementation(()=>{});
+  try{
+    jest.mocked(discoverInstagramAccount).mockRejectedValue(new Error("Unsupported request - method type: get"));
+    const res=await run();
+    expect(saveInstagramAccount).not.toHaveBeenCalled();
+    expect(res.redirect).toHaveBeenCalledWith(expect.stringContaining("instagram_stage=account_lookup"));
+    expect(log).toHaveBeenCalledWith("[Instagram connect] callback failed",{stage:"account_lookup"});
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/fixture-code|synthetic-token/);
+  }finally{log.mockRestore();}
+});
 test("authorization opened in a different browser cannot link an account", async () => {
   await run(createInstagramOAuthState("alice", binding), "b".repeat(64));
   expect(exchangeCodeForToken).not.toHaveBeenCalled(); expect(saveInstagramAccount).not.toHaveBeenCalled();
