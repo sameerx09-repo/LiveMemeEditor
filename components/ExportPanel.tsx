@@ -240,9 +240,9 @@ export default function ExportPanel({ onExport, onExportQueued }: Props) {
             <button
               onClick={onExport}
               disabled={exporting || !sourceObjectURL || sourceDuration <= 0 || duration < 1 || isLive}
-              className="min-w-0 py-3 bg-[#ff4444] hover:bg-[#ee3333] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-white font-bold text-sm transition-colors"
+              className="min-w-0 px-2 py-3 bg-[#ff4444] hover:bg-[#ee3333] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-white font-bold text-sm leading-snug break-words transition-colors"
             >
-              {exporting ? "Rendering…" : isLive ? "Grab clip" : "Save to History"}
+              {exporting ? "Rendering…" : isLive ? "Grab clip" : "Save to Scheduling Workspace"}
             </button>
             <button
               onClick={connected ? onPublish : onConnect}

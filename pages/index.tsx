@@ -518,7 +518,7 @@ export default function Home() {
       return item;
     } catch (err: any) {
       console.error("Export failed:", err);
-      alert(`Save to History failed: ${err.message}`);
+      alert(`Save to Scheduling Workspace failed: ${err.message}`);
     } finally {
       setExporting(false);
     }
@@ -828,7 +828,7 @@ export default function Home() {
           <div className="flex gap-2 ml-4" role="tablist" aria-label="Workspace">
             {(["editor", "schedule"] as const).map(tab => <button key={tab} role="tab" disabled={exporting} aria-selected={workspaceTab === tab} onClick={() => {
               videoRef.current?.pause();setPlaying(false);setWorkspaceTab(tab);
-            }} className={`px-3 py-1.5 text-xs rounded border disabled:opacity-40 ${workspaceTab === tab ? "border-[#ff4444] text-white" : "border-[#333] text-[#999]"}`}>{tab === "editor" ? "Editor" : "Schedule"}</button>)}
+            }} className={`px-3 py-1.5 text-xs rounded border disabled:opacity-40 ${workspaceTab === tab ? "border-[#ff4444] text-white" : "border-[#333] text-[#999]"}`}>{tab === "editor" ? "Editor" : "Schedule Workspace"}</button>)}
           </div>
           <div className="flex-1" />
           {userId && (

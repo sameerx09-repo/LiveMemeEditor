@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { CalendarClock, Film, GripVertical, Play, RefreshCw, Trash2, X } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, Film, GripVertical, Play, RefreshCw, Trash2, X } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { createClient } from "@/lib/supabase-browser";
 import type { ClipHistoryItem } from "@/lib/types";
@@ -25,6 +25,13 @@ export default function ScheduleCalendar() {
   const history = useStore(s => s.history);
   const clips = history.filter(c => c.exportUrl);
   const [date,setDate] = useState(() => local(new Date()).slice(0,10));
+  function moveDay(offset: number) {
+    setDate(current => {
+      const next=new Date(`${current}T12:00:00`);
+      next.setDate(next.getDate()+offset);
+      return local(next).slice(0,10);
+    });
+  }
   const [now,setNow] = useState(() => Date.now());
   const [view,setView] = useState("60");
   const [posts,setPosts] = useState<Post[]>([]);
@@ -224,7 +231,13 @@ export default function ScheduleCalendar() {
         <h1 className="text-base font-semibold mr-auto">Instagram schedule</h1>
         <select aria-label="Filter Instagram account" value={accountFilter} onChange={event=>setAccountFilter(event.target.value)} className={`${control} bg-[#222] max-w-full`}><option value="">All accounts</option>{[...new Set([...accounts.map(account=>account.username),...posts.map(post=>post.target_username).filter((value):value is string=>!!value)])].map(username=><option key={username} value={username}>@{username}</option>)}</select>
         <div role="group" aria-label="Delivery mode" className="flex flex-wrap gap-1 w-full order-last">{[["auto","Auto-publish"],["manual","Finish in Instagram"]].map(([value,label]) => <button key={value} disabled={busy} aria-pressed={deliveryMode===value} className={`${control} ${deliveryMode===value ? "bg-[#444]" : ""}`} onClick={() => {setDeliveryMode(value);setError("");}}>{label}</button>)}</div>
-        <input aria-label="Calendar date" type="date" value={date} onChange={e => e.target.value && setDate(e.target.value)} className={`${control} bg-[#222]`}/>
+        <div className="flex items-center gap-1 max-w-full">
+          <button type="button" aria-label="Previous day" title="Previous day" onClick={()=>moveDay(-1)} className={`${control} shrink-0 !p-2`}><ChevronLeft size={16}/></button>
+          <input aria-label="Calendar date" type="date" value={date}
+            onClick={event=>{try{event.currentTarget.showPicker?.();}catch { /* Native date editing remains available when showPicker is unsupported. */ }}}
+            onChange={e => e.target.value && setDate(e.target.value)} className={`${control} min-w-0 bg-[#222] cursor-pointer`}/>
+          <button type="button" aria-label="Next day" title="Next day" onClick={()=>moveDay(1)} className={`${control} shrink-0 !p-2`}><ChevronRight size={16}/></button>
+        </div>
         <button className={control} onClick={() => setDate(local(new Date()).slice(0,10))}>Today</button>
         <div role="group" aria-label="Interval" className="flex">{[["60","Hourly"],["30","30 min"],["days","Days"]].map(([v,label]) => <button key={v} aria-pressed={view===v} className={`${control} ${view===v ? "bg-[#444]" : ""}`} onClick={() => setView(v)}>{label}</button>)}</div>
         <button title="Refresh schedule and membership" className={control} onClick={() => { void load(); void access.refresh(); }}><RefreshCw size={15}/></button>
