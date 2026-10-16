@@ -17,7 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (error) throw error;
     if (!post) return res.status(404).json({ error: "Post not found in this account" });
     if (req.method === "GET") return res.status(200).json({ post: { id: post.id, name: post.name, caption: post.caption, audio_url: post.audio_url,
-      scheduled_at: post.scheduled_at, status: post.status, error: post.error, email_sent_at: post.email_sent_at,
+      scheduled_at: post.scheduled_at, status: post.status, error: post.error, email_sent_at: post.email_sent_at,target_username:post.target_username,
       preview_url: refreshScheduledMediaUrl(post.media_url, user.id, getRequestBaseUrl(req)) } });
     if (!await checkApiRateLimit(user.id, "schedule", res)) return;
     if (["notifying", "completed"].includes(post.status)) return res.status(409).json({ error: "This post is sending a reminder or is already marked done. Refresh and try again." });

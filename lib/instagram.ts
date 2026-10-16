@@ -228,7 +228,8 @@ export async function saveInstagramAccount(userId: string, account: {
   pageId?: string;
 }) {
   const admin = createAdminClient();
-  const { error } = await admin.rpc("connect_instagram_account", {
+  const ready=await admin.rpc("instagram_multi_account_ready");
+  const { error } = await admin.rpc(ready.data===true ? "connect_instagram_account_multi" : "connect_instagram_account", {
     p_user_id: userId,
     p_ig_user_id: account.igUserId,
     p_username: account.username,
@@ -236,12 +237,26 @@ export async function saveInstagramAccount(userId: string, account: {
     p_access_token: account.accessToken,
   });
 
+  if (error?.message?.includes("Maximum three")) throw new Error("Three Instagram accounts are already connected. Disconnect one before adding another.");
   if (error) throw new Error("Could not save Instagram connection. Ask the administrator to check the Instagram connections database setup.");
 }
 
-export async function disconnectInstagramAccount(userId: string) {
-  const { error } = await createAdminClient().rpc("disconnect_instagram_account", { p_user_id: userId });
+export async function disconnectInstagramAccount(userId: string, accountId?: string) {
+  const admin=createAdminClient();
+  const targeted=!!accountId;
+  if(accountId) {
+    const ready=await admin.rpc("instagram_multi_account_ready");
+    if(ready.data!==true)throw new Error("Apply the multi-account database migration before disconnecting a specific account");
+  }
+  const { error } = await admin.rpc(targeted ? "disconnect_instagram_account_target" : "disconnect_instagram_account", targeted ? {p_user_id:userId,p_account_id:accountId} : { p_user_id: userId });
   if (error) throw new Error("Could not disconnect Instagram. Please try again or ask the administrator to check the Instagram connections database setup.");
+}
+
+export async function listInstagramAccounts(userId: string) {
+  const {data,error}=await createAdminClient().from("social_accounts").select("id,ig_user_id,username")
+    .eq("user_id",userId).eq("provider","instagram").neq("access_token","").order("updated_at",{ascending:false});
+  if(error) throw error;
+  return (data || []).map(account=>({id:account.id,igUserId:account.ig_user_id,username:account.username}));
 }
 
 export async function getScheduledInstagramAccount(userId: string, accountId: string): Promise<InstagramAccount | null> {

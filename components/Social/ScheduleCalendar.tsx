@@ -11,7 +11,10 @@ import { INSTAGRAM_CONNECTION_CHANGED } from "@/lib/instagram-connection-events"
 import SchedulePreviewVideo from "./SchedulePreviewVideo";
 import { manualPostLabel, validateAudioUrl } from "@/lib/manual-posts";
 import Link from "next/link";
-type Post = { id: string; caption: string; scheduled_at: string; status: string; preview_url?: string | null; error?: string; delivery_mode?: "manual"; name?: string };
+import InstagramDestinations from "./InstagramDestinations";
+import type { InstagramDestination } from "@/lib/instagram-destinations";
+import { rememberedDestinations,rememberDestinations,manualHandles } from "@/lib/instagram-destinations";
+type Post = { id: string; caption: string; scheduled_at: string; status: string; preview_url?: string | null; error?: string; delivery_mode?: "manual"; name?: string;target_username?:string;social_account_id?:string;group_id?:string };
 const postEndpoint = (post: Post) => `${post.delivery_mode === "manual" ? "/api/manual-posts" : "/api/instagram/schedule"}/${encodeURIComponent(post.id)}`;
 const editable = (post: Post) => post.status === "scheduled" || (post.delivery_mode === "manual" && ["awaiting_manual","failed","skipped"].includes(post.status));
 const deletable = (post: Post) => editable(post) || post.status === "failed";
@@ -30,6 +33,14 @@ export default function ScheduleCalendar() {
   const [deliveryMode,setDeliveryMode] = useState("auto");
   const [audioUrl,setAudioUrl] = useState("");
   const [emailReminder,setEmailReminder] = useState(false);
+  const [accounts,setAccounts]=useState<InstagramDestination[]>([]);
+  const [multiAccount,setMultiAccount]=useState(false);
+  const [selectedAccounts,setSelectedAccounts]=useState<string[]>([]);
+  const [accountFilter,setAccountFilter]=useState("");
+  const [handles,setHandles]=useState("");
+  const initializedAccounts=useRef(false),draftRequestId=useRef("");
+  const owner=useRef("");
+  const chooseAccounts=(ids:string[])=>{setSelectedAccounts(ids);if(owner.current)rememberDestinations(owner.current,ids);};
   const delivery = deliveryMode === "manual" ? reminders : scheduler;
   const [selected,setSelected] = useState<ClipHistoryItem | null>(null);
   const [draft,setDraft] = useState<{clip: ClipHistoryItem; time: string} | null>(null);
@@ -58,10 +69,15 @@ export default function ScheduleCalendar() {
     const revision = ++loadRevision.current;
     try {
       const { data: { session } } = await createClient().auth.getSession();
-      const [data, savedLinks, manual] = await Promise.all([request("/api/instagram/schedule"), session ? listScheduledClips(session.user.id) : Promise.resolve([]),
-        request("/api/manual-posts").catch(() => ({posts:[],reminders:{enabled:false,message:"Manual reminders unavailable. Check setup."}}))]);
+      const [data, savedLinks, manual, destinations] = await Promise.all([request("/api/instagram/schedule"), session ? listScheduledClips(session.user.id) : Promise.resolve([]),
+        request("/api/manual-posts").catch(() => ({posts:[],reminders:{enabled:false,message:"Manual reminders unavailable. Check setup."}})),request("/api/instagram/accounts")]);
       if (revision !== loadRevision.current) return;
       const all = [...data.posts,...manual.posts];
+      const rows:InstagramDestination[]=destinations.accounts;setAccounts(rows);
+      owner.current=session?.user.id || "";
+      setMultiAccount(destinations.multiAccount===true);
+      const initial=!initializedAccounts.current;initializedAccounts.current=true;
+      setSelectedAccounts(current=>initial?rememberedDestinations(owner.current,rows):current.filter(id=>rows.some(row=>row.id===id)));
       setPosts(all);setReminders(manual.reminders); setLinks(savedLinks); setScheduler(data.scheduler || {enabled: false, message: "Scheduler status unavailable"});
       setPreview(current => current ? all.find((post: Post) => post.id === current.id) || null : null);
     }
@@ -86,22 +102,22 @@ export default function ScheduleCalendar() {
     const time = calendarScheduleTime(slot, view === "days", requestedAt);
     if (!time) { setError("Past time slots cannot be scheduled"); return; }
     setDraft({clip,time:local(time)});setCaption("");setAudioUrl("");setEmailReminder(false);setError("");setNotice("");
+    draftRequestId.current=crypto.randomUUID();setHandles("");
   }
   async function save() {
     if (!draft || working.current) return;
+    if(deliveryMode === "auto" && !selectedAccounts.length){setError("Select at least one Instagram destination");return;}
     if (deliveryMode === "manual" && !emailReminder) {setError("Confirm the email reminder");return;}
     if (!isFutureSchedule(draft.time, Date.now())) {setError("Choose a future time");return;}
     working.current = true;setBusy(true);setError("");setNotice("");
     try {
       if (!await access.refresh()) throw new Error("Instagram scheduling requires an active Pro membership. Check your account plan.");
       if (deliveryMode === "manual") validateAudioUrl(audioUrl);
-      let account;
+      if(deliveryMode === "manual" && multiAccount && !selectedAccounts.length)manualHandles(handles.split(",").map(handle=>handle.trim()));
       if (deliveryMode === "auto") {
         const worker = await request("/api/instagram/scheduler-status");
         setScheduler(worker);
         if (!worker.enabled) throw new Error(worker.message);
-        account = await request("/api/instagram/account");
-        if (!account.connected) throw new Error("Connect Instagram in your user profile first");
       } else {
         const current = await request("/api/manual-posts");
         setReminders(current.reminders);
@@ -113,12 +129,12 @@ export default function ScheduleCalendar() {
       const { data: { session } } = await createClient().auth.getSession();
       if (!session) throw new Error("Sign in to schedule posts");
       const mediaUrl = await uploadInstagramClip(blob, { Authorization: `Bearer ${session.access_token}` });
-      const result = await request(deliveryMode === "manual" ? "/api/manual-posts" : "/api/instagram/schedule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mediaUrl,caption,igUserId:account?.igUserId,
-        name:(draft.clip.exportFileName || "Instagram reel").slice(0,200),audioUrl,emailReminder,scheduledAt:new Date(draft.time).toISOString()})});
+      const result = await request(deliveryMode === "manual" ? "/api/manual-posts" : "/api/instagram/schedule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mediaUrl,caption,accountIds:multiAccount?selectedAccounts:undefined,igUserId:multiAccount?undefined:accounts[0]?.igUserId,requestId:draftRequestId.current,
+        handles:multiAccount && handles?handles.split(",").map(handle=>handle.trim()):undefined,name:(draft.clip.exportFileName || "Instagram reel").slice(0,200),audioUrl,emailReminder,scheduledAt:new Date(draft.time).toISOString()})});
       try {
         const { data: { session } } = await createClient().auth.getSession();
         if (!session) throw new Error("Session ended");
-        await linkScheduledClip(session.user.id, result.post.id, draft.clip);
+        for(const post of result.posts || [result.post]) await linkScheduledClip(session.user.id,post.id,draft.clip);
       } catch { setError("Post scheduled, but its history reference could not be saved in this browser"); }
       setDraft(null);setSelected(null);await load();
     } catch(e) {setError(e instanceof Error ? e.message : "Scheduling failed");}
@@ -206,6 +222,7 @@ export default function ScheduleCalendar() {
     <section className="flex-1 min-w-0 min-h-0 flex flex-col">
       <div className="flex flex-wrap items-center gap-2 p-4 border-b border-[#333]">
         <h1 className="text-base font-semibold mr-auto">Instagram schedule</h1>
+        <select aria-label="Filter Instagram account" value={accountFilter} onChange={event=>setAccountFilter(event.target.value)} className={`${control} bg-[#222] max-w-full`}><option value="">All accounts</option>{[...new Set([...accounts.map(account=>account.username),...posts.map(post=>post.target_username).filter((value):value is string=>!!value)])].map(username=><option key={username} value={username}>@{username}</option>)}</select>
         <div role="group" aria-label="Delivery mode" className="flex flex-wrap gap-1 w-full order-last">{[["auto","Auto-publish"],["manual","Finish in Instagram"]].map(([value,label]) => <button key={value} disabled={busy} aria-pressed={deliveryMode===value} className={`${control} ${deliveryMode===value ? "bg-[#444]" : ""}`} onClick={() => {setDeliveryMode(value);setError("");}}>{label}</button>)}</div>
         <input aria-label="Calendar date" type="date" value={date} onChange={e => e.target.value && setDate(e.target.value)} className={`${control} bg-[#222]`}/>
         <button className={control} onClick={() => setDate(local(new Date()).slice(0,10))}>Today</button>
@@ -220,7 +237,7 @@ export default function ScheduleCalendar() {
         {slots.map(({time,end}) => {
           const future = calendarScheduleTime(time, view === "days", now) !== null;
           const available = !busy && access.allowed && future && (draggingPost !== null || delivery?.enabled === true);
-          const items = posts.filter(p => new Date(p.scheduled_at)>=time && new Date(p.scheduled_at)<end);
+          const items = posts.filter(p => new Date(p.scheduled_at)>=time && new Date(p.scheduled_at)<end && (!accountFilter || p.target_username===accountFilter));
           return <div key={time.toISOString()} data-slot-start={time.toISOString()} data-slot-disabled={!available}
             onDragOver={e => {
               const moving = e.dataTransfer.types.includes("application/x-clipmeme-schedule");
@@ -267,6 +284,7 @@ export default function ScheduleCalendar() {
                   </span>
                   <span className="min-w-0 flex-1 text-xs">
                     <span className="block truncate font-semibold text-white">{name}</span>
+                    {post.target_username && <span className="block truncate mt-1 text-[#78cfc8]">@{post.target_username}</span>}
                     <span className="block mt-1 text-[#aaa]">{new Date(post.scheduled_at).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}</span>
                     <span className="block mt-1 line-clamp-2 break-words text-[#ddd]">{post.caption || "No caption"}</span>
                     <span className={`block mt-1 text-[10px] ${skipped ? "text-[#aaa]" : post.status === "failed" ? "text-red-400" : overdue ? "text-[#ffca28]" : "text-[#78cfc8]"}`}>{post.delivery_mode === "manual" ? manualPostLabel(post.status) : skipped ? "Skipped" : overdue ? "Overdue" : post.status}</span>
@@ -293,7 +311,9 @@ export default function ScheduleCalendar() {
       </div>
       <label className="block text-xs">Date and time<input type="datetime-local" min={local(new Date(now + 60000))} value={draft.time} onChange={e => setDraft({...draft,time:e.target.value})} className="block w-full mt-2 p-2 bg-[#222] rounded"/></label>
       <label className="block text-xs">Caption<textarea rows={4} maxLength={2200} value={caption} onChange={e => setCaption(e.target.value)} className="block w-full mt-2 p-2 bg-[#222] rounded"/></label>
+      <InstagramDestinations accounts={accounts} selected={selectedAccounts} onChange={chooseAccounts} disabled={busy || !!handles}/>
       {deliveryMode === "manual" && <>
+        {multiAccount && <label className="block text-xs">Other Instagram handles (comma separated)<input value={handles} disabled={busy} onChange={event=>{setHandles(event.target.value);if(event.target.value)setSelectedAccounts([]);}} className="block w-full mt-2 p-2 bg-[#222] rounded"/></label>}
         <label className="block text-xs">Instagram audio link (optional)<input type="url" value={audioUrl} onChange={e => setAudioUrl(e.target.value)} placeholder="https://www.instagram.com/reels/audio/.../" className="block w-full mt-2 p-2 bg-[#222] rounded"/></label>
         <label className="flex items-start gap-2 text-xs text-[#ccc]"><input type="checkbox" checked={emailReminder} onChange={e => setEmailReminder(e.target.checked)}/>Email me at the scheduled time. I will finish posting in Instagram.</label>
       </>}
@@ -327,6 +347,7 @@ export default function ScheduleCalendar() {
         {previewUrl ? <SchedulePreviewVideo key={`${preview.id}:${previewUrl}`} src={previewUrl} poster={previewClip?.thumbnail || previewLink?.thumbnail} /> : <p className="text-xs text-[#aaa]">Video preview unavailable</p>}
         <p className="text-xs text-[#aaa]">{new Date(preview.scheduled_at).toLocaleString()} · {preview.delivery_mode === "manual" ? manualPostLabel(preview.status) : previewSkipped ? "Skipped" : preview.status}</p>
         <p className="text-sm text-[#ddd] whitespace-pre-wrap break-words">{preview.caption || "No caption"}</p>
+        {preview.target_username && <p className="text-xs text-[#78cfc8]">@{preview.target_username}</p>}
         {preview.error && <p className="text-xs text-red-400">{preview.error}</p>}
         <div className="flex flex-wrap gap-2">
           {preview.delivery_mode === "manual" && <Link className={control} href={`/manual-post/${preview.id}`}>Finish in Instagram</Link>}

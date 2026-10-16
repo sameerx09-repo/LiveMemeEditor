@@ -3,6 +3,7 @@ export type ManualPost = {
   media_url: string; scheduled_at: string; status: string; error: string | null;
   email_sent_at: string | null; completed_at: string | null;
   attempts: number; lease_id: string | null;
+  target_username?: string;
 };
 
 export function validPostId(id: unknown): id is string {

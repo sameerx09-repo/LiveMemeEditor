@@ -5,6 +5,7 @@ import { createAdminClient, getDefaultInstagramAccount, getRequestBaseUrl } from
 import { createScheduledMediaReference, refreshScheduledMediaUrl } from "@/lib/instagram-scheduled-media";
 import { getInstagramSchedulerStatus } from "@/lib/instagram-scheduler-status";
 import { checkApiRateLimit } from "@/lib/api-rate-limit";
+import { createInstagramBatch,selectedInstagramAccounts } from "@/lib/instagram-batch";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : "Instagram schedule failed";
@@ -26,14 +27,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === "GET") {
       const { data, error } = await admin
         .from("instagram_posts")
-        .select("id,caption,media_url,scheduled_at,status,error,instagram_media_id,created_at")
+        .select("*,target:social_accounts!social_account_id(username)")
         .eq("user_id", user.id)
         .order("scheduled_at", { ascending: false })
         .limit(1000);
       if (error) throw error;
       res.setHeader("Cache-Control", "no-store");
       return res.status(200).json({ scheduler, posts: (data ?? []).map(post => {
-        try { return { ...post, preview_url: refreshScheduledMediaUrl(post.media_url, user.id, getRequestBaseUrl(req)) }; }
+        try { return { ...post, name:post.post_name,target_username:Array.isArray(post.target)?post.target[0]?.username:(post.target as {username?:string}|null)?.username,
+          preview_url: refreshScheduledMediaUrl(post.media_url, user.id, getRequestBaseUrl(req)) }; }
         catch { return { ...post, preview_url: null }; }
       }) });
     }
@@ -48,6 +50,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let mediaReference: string;
     try { mediaReference = createScheduledMediaReference(mediaUrl, user.id, getRequestBaseUrl(req)); }
     catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid scheduled media" }); }
+
+    if(req.body.accountIds !== undefined) {
+      try {
+        if(typeof caption!=="string" || caption.length>2200)throw new Error("Caption must be at most 2200 characters");
+        const accounts=await selectedInstagramAccounts(user.id,req.body.accountIds);
+        const result=await createInstagramBatch({userId:user.id,groupId:req.body.requestId,accounts,mediaReference,caption,
+          name:typeof req.body.name==="string"?req.body.name:"Instagram reel",scheduledAt:scheduleTime.toISOString(),immediate:false});
+        return res.status(200).json({ok:true,posts:result.posts,post:result.posts[0]});
+      }catch(error){return res.status(409).json({error:error instanceof Error?error.message:"Could not schedule destinations"});}
+    }
 
     const account = await getDefaultInstagramAccount(user.id);
     if (!account) return res.status(409).json({ error: "Connect Instagram first" });

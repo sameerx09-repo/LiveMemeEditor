@@ -7,6 +7,9 @@ import { useStore } from "@/lib/store";
 import type { ClipHistoryItem } from "@/lib/types";
 import { linkScheduledClip } from "@/lib/export-history";
 import { uploadInstagramClip } from "@/lib/instagram-upload-client";
+import InstagramDestinations from "./InstagramDestinations";
+import type { InstagramDestination } from "@/lib/instagram-destinations";
+import { rememberedDestinations,rememberDestinations } from "@/lib/instagram-destinations";
 
 type AccountState = {
   connected: boolean;
@@ -39,6 +42,16 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
   const latestExport = history.find((item) => item.exportUrl);
   const [account, setAccount] = useState<AccountState>({ connected: false, username: null, igUserId: null });
   const accountRequest = useRef(0);
+  const [accounts,setAccounts]=useState<InstagramDestination[]>([]);
+  const [multiAccount,setMultiAccount]=useState(false);
+  const selectionInitialized=useRef(false);
+  const owner=useRef("");
+  const [selected,setSelected]=useState<string[]>([]);
+  const changeSelected=(ids:string[])=>{setSelected(ids);if(owner.current)rememberDestinations(owner.current,ids);};
+  const [publishResults,setPublishResults]=useState<{id:string;username:string;status:string;error?:string}[]>([]);
+  const intent=useRef<{id:string;mediaUrl?:string;item?:ClipHistoryItem}>({id:""});
+  const [publishRequestId,setPublishRequestId]=useState("");
+  const scheduleIntent=useRef<{key:string;id:string;mediaUrl?:string}>({key:"",id:""});
   const [scheduler, setScheduler] = useState<{enabled: boolean; message: string} | null>(null);
   const [caption, setCaption] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
@@ -56,16 +69,24 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return {};
+    owner.current=session.user.id;
     return { Authorization: `Bearer ${session.access_token}` };
   }
 
   async function loadAccount() {
     const version = ++accountRequest.current;
     try {
-      const res = await fetch("/api/instagram/account", { headers: await authHeaders(), cache: "no-store" });
+      const res = await fetch("/api/instagram/accounts", { headers: await authHeaders(), cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not load Instagram account");
-      if (version === accountRequest.current) setAccount({ connected: data.connected, username: data.username, igUserId: data.igUserId });
+      if (version === accountRequest.current) {
+        if(!Array.isArray(data.accounts))throw new Error("Invalid account list");
+        const rows:InstagramDestination[]=data.accounts;setAccounts(rows);
+        setMultiAccount(data.multiAccount===true);
+        setAccount({connected:rows.length>0,username:rows[0]?.username || null,igUserId:rows[0]?.igUserId || null});
+        const initial=!selectionInitialized.current;selectionInitialized.current=true;
+        setSelected(current=>initial?rememberedDestinations(owner.current,rows):current.filter(id=>rows.some(row=>row.id===id)));
+      }
     } catch (err: unknown) {
       if (version === accountRequest.current) {
         setAccount({ connected: false, username: null, igUserId: null });
@@ -133,14 +154,20 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
 
   async function publishNow() {
     if (status.kind === "working") return;
+    if(intent.current.id!==publishRequestId)intent.current={id:publishRequestId};
     setStatus({ kind: "working", text: "Checking membership..." });
     try {
       if (!await access.refresh()) throw new Error("Instagram posting requires an active Pro membership. Check your account plan.");
       if (!account.connected) throw new Error("Connect Instagram first");
+      if(!selected.length)throw new Error("Select at least one destination");
       setStatus({ kind: "working", text: "Rendering and saving current edit..." });
-      const item = await renderCurrent();
-      if (!item) throw new Error("Could not save current edit; nothing was posted");
-      const mediaUrl = await ensureUploaded(item);
+      if(!intent.current.mediaUrl){
+        const item = await renderCurrent();
+        if (!item) throw new Error("Could not save current edit; nothing was posted");
+        intent.current.item=item;
+        intent.current.mediaUrl=await ensureUploaded(item);
+      }
+      const mediaUrl=intent.current.mediaUrl;
       setStatus({ kind: "working", text: "Publishing to Instagram..." });
       const res = await fetch("/api/instagram/publish", {
         method: "POST",
@@ -148,12 +175,16 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
           ...(await authHeaders()),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mediaUrl, caption, igUserId: account.igUserId }),
+        body: JSON.stringify({ mediaUrl, caption, accountIds:multiAccount?selected:undefined,igUserId:multiAccount?undefined:account.igUserId,requestId:intent.current.id,name:intent.current.item?.exportFileName }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Publish failed");
-      setStatus({ kind: "success", text: "Published to Instagram." });
-      setPostDialog(false);
+      setPublishResults(data.results || [{id:"legacy",username:account.username || "Instagram",status:"published"}]);
+      const {data:{session}}=await createClient().auth.getSession();
+      if(session && intent.current.item)for(const result of data.results || []) {
+        try{await linkScheduledClip(session.user.id,result.id,intent.current.item);}catch { /* Publishing results remain in the calendar. */ }
+      }
+      setStatus({ kind: data.ok?"success":"error", text:data.ok?"Published to selected accounts.":"Review individual destination results before posting again." });
     } catch (err: unknown) {
       setStatus({ kind: "error", text: errorMessage(err) });
     }
@@ -165,12 +196,16 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
     try {
       if (!await access.refresh()) throw new Error("Instagram scheduling requires an active Pro membership. Check your account plan.");
       if (!account.connected) throw new Error("Connect Instagram first");
+      if(!selected.length)throw new Error("Select at least one destination");
       if (!scheduledAt) throw new Error("Choose a schedule time");
       if (new Date(scheduledAt).getTime() <= Date.now()) throw new Error("Choose a future schedule time");
       setStatus({ kind: "working", text: "Checking scheduler..." });
       const worker = await loadScheduler();
       if (!worker.enabled) throw new Error(worker.message);
-      const mediaUrl = await ensureUploaded();
+      const key=JSON.stringify([owner.current,latestExport?.id,caption,scheduledAt,selected]);
+      if(scheduleIntent.current.key!==key)scheduleIntent.current={key,id:crypto.randomUUID()};
+      if(!scheduleIntent.current.mediaUrl)scheduleIntent.current.mediaUrl=await ensureUploaded();
+      const mediaUrl=scheduleIntent.current.mediaUrl;
       setStatus({ kind: "working", text: "Scheduling Instagram post..." });
       const res = await fetch("/api/instagram/schedule", {
         method: "POST",
@@ -178,7 +213,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
           ...(await authHeaders()),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mediaUrl, caption, igUserId: account.igUserId, scheduledAt: new Date(scheduledAt).toISOString() }),
+        body: JSON.stringify({ mediaUrl, caption, accountIds:multiAccount?selected:undefined,igUserId:multiAccount?undefined:account.igUserId,requestId:scheduleIntent.current.id,scheduledAt: new Date(scheduledAt).toISOString() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Schedule failed");
@@ -186,7 +221,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
       try {
         const { data: { session } } = await createClient().auth.getSession();
         if (!session || !latestExport) throw new Error("Saved clip unavailable");
-        await linkScheduledClip(session.user.id, data.post.id, latestExport);
+        for(const post of data.posts || [data.post]) await linkScheduledClip(session.user.id,post.id,latestExport);
       } catch { referenceSaved = false; }
       setStatus({ kind: "success", text: `Scheduled for ${scheduleLabel}.${referenceSaved ? "" : " History reference could not be saved."}` });
     } catch (err: unknown) {
@@ -196,13 +231,15 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
 
   return (
     <div className="mt-auto border-t border-[#1e1e1e] pt-3">
+      {/* The render prop receives click handlers; refs are only accessed when clicked. */}
+      {/* eslint-disable-next-line react-hooks/refs */}
       {renderPrimaryAction?.({
         connected: account.connected,
         canPost: canRender && access.allowed,
         lockedReason: access.message,
         working: status.kind === "working",
-        onConnect: connectInstagram,
-        onPublish: () => { if (access.allowed) { setStatus({ kind: "idle", text: "" }); setPostDialog(true); } },
+        onConnect: () => { void connectInstagram(); },
+        onPublish: () => { if (access.allowed) { setPublishRequestId(crypto.randomUUID());setPublishResults([]);setStatus({ kind: "idle", text: "" }); setPostDialog(true); } },
       })}
 
       {!access.allowed && <div className="mb-3 flex items-center gap-2 text-xs text-[#aaa]">
@@ -227,6 +264,7 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
         </button>
       ) : access.allowed ? (
         <div className="space-y-2">
+          <InstagramDestinations accounts={accounts} selected={selected} onChange={changeSelected} disabled={status.kind==="working"}/>
           <p role="status" className={`text-[10px] ${scheduler?.enabled ? "text-[#78cfc8]" : "text-[#ffca28]"}`}>{scheduler?.message || "Checking scheduler..."}</p>
           <textarea
             value={caption}
@@ -278,16 +316,17 @@ export default function InstagramPanel({ renderPrimaryAction, renderCurrent, can
       )}
       {postDialog && (
         <div role="dialog" aria-modal="true" aria-labelledby="instagram-post-title" className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-lg border border-[#333] bg-[#191919] p-5 space-y-4">
+          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-lg border border-[#333] bg-[#191919] p-5 space-y-4">
             <h2 id="instagram-post-title" className="text-sm font-semibold text-white">Post to Instagram</h2>
-            <p className="text-xs text-[#aaa]">@{account.username}</p>
+            <InstagramDestinations accounts={accounts} selected={selected} onChange={changeSelected} disabled={status.kind==="working" || publishResults.length>0}/>
+            {publishResults.map(result=><p key={result.id} className="text-xs text-[#ccc] break-words">@{result.username}: {result.status}{result.error?`: ${result.error}`:""}</p>)}
             <label className="block text-xs text-[#ccc]">Caption
               <textarea autoFocus value={caption} maxLength={2200} disabled={status.kind === "working"} onChange={e => setCaption(e.target.value)} rows={4} className="block w-full mt-2 p-2 bg-[#111] border border-[#333] rounded text-white" />
             </label>
             {status.text && <p role="status" className="text-xs text-[#ddd]">{status.text}</p>}
             <div className="flex justify-end gap-2">
               <button disabled={status.kind === "working"} onClick={() => setPostDialog(false)} className="px-3 py-2 text-xs text-[#aaa]">Cancel</button>
-              <button disabled={!account.connected || !access.allowed || status.kind === "working" || !canRender} onClick={() => void publishNow()} className="px-3 py-2 text-xs bg-[#c93640] rounded text-white disabled:opacity-40">{status.kind === "working" ? "Posting..." : "Post now"}</button>
+              <button disabled={!account.connected || !access.allowed || !selected.length || publishResults.length>0 || status.kind === "working" || !canRender} onClick={() => void publishNow()} className="px-3 py-2 text-xs bg-[#c93640] rounded text-white disabled:opacity-40">{status.kind === "working" ? "Posting..." : "Post now"}</button>
             </div>
           </div>
         </div>

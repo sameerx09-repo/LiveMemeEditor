@@ -22,7 +22,7 @@ beforeEach(() => {
 async function run(method = "GET") {
   const res = { status: jest.fn(), json: jest.fn(), end: jest.fn(), setHeader: jest.fn(), getHeader: jest.fn() };
   res.status.mockReturnValue(res);
-  await handler({ method, headers: {}, body: { userId: "bob", igUserId: "ig-bob" }, query: { userId: "bob" } } as unknown as NextApiRequest, res as unknown as NextApiResponse);
+  await handler({ method, headers: {}, body: { userId: "bob", igUserId: "ig-bob",accountId:"11111111-1111-4111-8111-111111111111" }, query: { userId: "bob" } } as unknown as NextApiRequest, res as unknown as NextApiResponse);
   return res;
 }
 
@@ -39,12 +39,12 @@ test("an unlinked account is explicitly disconnected", async () => {
   expect((await run()).json).toHaveBeenCalledWith({ connected: false, username: null, igUserId: null });
 });
 
-test("disconnect uses the verified owner, ignores supplied identifiers, and invalidates pending browser OAuth", async () => {
+test("disconnect targets the selected account under the verified owner and invalidates pending browser OAuth", async () => {
   const res = await run("DELETE");
   expect(checkApiRateLimit).toHaveBeenCalledWith("alice", "connect", res);
-  expect(disconnectInstagramAccount).toHaveBeenCalledWith("alice");
+  expect(disconnectInstagramAccount).toHaveBeenCalledWith("alice","11111111-1111-4111-8111-111111111111");
   expect(getDefaultInstagramAccount).not.toHaveBeenCalled();
-  expect(res.json).toHaveBeenCalledWith({ connected: false, username: null, igUserId: null });
+  expect(res.json).toHaveBeenCalledWith({ ok:true,disconnectedAccountId:"11111111-1111-4111-8111-111111111111" });
   expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", [expect.stringContaining("Max-Age=0")]);
   expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", [expect.stringContaining("HttpOnly")]);
 });

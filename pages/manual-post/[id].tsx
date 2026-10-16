@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase-browser";
 import { manualPostLabel, validPostId, type ManualPost } from "@/lib/manual-posts";
 import SchedulePreviewVideo from "@/components/Social/SchedulePreviewVideo";
 
-type Post = Pick<ManualPost,"id"|"name"|"caption"|"audio_url"|"scheduled_at"|"status"|"error"|"email_sent_at"> & { preview_url: string };
+type Post = Pick<ManualPost,"id"|"name"|"caption"|"audio_url"|"scheduled_at"|"status"|"error"|"email_sent_at"|"target_username"> & { preview_url: string };
 const button = "inline-flex items-center justify-center gap-2 border border-[#555] rounded-md px-4 py-3 text-sm disabled:opacity-40";
 export default function ManualPostPage() {
   const router = useRouter();
@@ -122,6 +122,7 @@ export default function ManualPostPage() {
         {error && <p role="alert" className="text-sm text-red-300 break-words">{error}</p>}
         {post && <>
           <div><h2 className="text-base break-words">{post.name}</h2><p className="text-xs text-[#bbb] mt-2">{new Date(post.scheduled_at).toLocaleString()} · {manualPostLabel(post.status)}</p></div>
+          {post.target_username && <p className="text-sm text-[#78cfc8] break-all">Instagram destination: @{post.target_username}</p>}
           <SchedulePreviewVideo key={fileUrl || post.preview_url} src={fileUrl || post.preview_url}/>
           <div className="flex flex-wrap gap-3">
             {!file ? <button className={`${button} bg-[#a72c35]`} disabled={busy} onClick={() => void prepare()}><Download size={16}/>{busy ? "Preparing..." : "Prepare video"}</button> : <>

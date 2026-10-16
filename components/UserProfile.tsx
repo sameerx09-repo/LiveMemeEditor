@@ -83,7 +83,7 @@ export default function UserProfile({ userId, email, onSignOut }: Props) {
       <ChevronDown size={13} aria-hidden="true" />
     </button>
     {open && <div id="user-profile-panel" role="dialog" aria-label="User profile"
-      className="absolute right-0 top-full z-[80] mt-2 max-h-[calc(100dvh-6rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border border-[#383838] bg-[#181818] p-4 text-[#ddd] shadow-xl">
+      className="fixed right-4 top-14 sm:absolute sm:right-0 sm:top-full z-[80] mt-2 max-h-[calc(100dvh-6rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border border-[#383838] bg-[#181818] p-4 text-[#ddd] shadow-xl">
       <div className="font-semibold text-white">Account</div>
       <p className="mt-1 break-all text-[#aaa]">{accountEmail || "Signed in"}</p>
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#333] pt-3">
