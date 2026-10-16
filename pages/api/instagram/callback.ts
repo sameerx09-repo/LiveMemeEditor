@@ -29,9 +29,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!code || Array.isArray(code)) throw new Error("Missing OAuth code");
 
     stage="token_exchange";
-    const accessToken = await exchangeCodeForToken(code, redirectUri);
+    const {accessToken,igUserId} = await exchangeCodeForToken(code, redirectUri);
     stage="account_lookup";
-    const account = await discoverInstagramAccount(accessToken);
+    const account = await discoverInstagramAccount(accessToken,igUserId);
 
     stage="save_connection";
     await saveInstagramAccount(userId, { ...account, accessToken });

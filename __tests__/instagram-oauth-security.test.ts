@@ -16,7 +16,7 @@ beforeEach(() => {
   jest.clearAllMocks(); jest.useFakeTimers();
   process.env.INSTAGRAM_STATE_SECRET = "synthetic-state-signing-secret";
   jest.mocked(getCookieUser).mockResolvedValue({ id: "alice", email: "" });
-  jest.mocked(exchangeCodeForToken).mockResolvedValue("synthetic-token");
+  jest.mocked(exchangeCodeForToken).mockResolvedValue({accessToken:"synthetic-token",igUserId:"123456789"});
   jest.mocked(discoverInstagramAccount).mockResolvedValue({ igUserId: "fixture-ig", username: "fixture" });
 });
 afterEach(() => {
@@ -31,6 +31,7 @@ async function run(state = createInstagramOAuthState("alice", binding), cookie: 
 test("normal callback links the authorized account and consumes the browser cookie", async () => {
   const res = await run();
   expect(saveInstagramAccount).toHaveBeenCalledWith("alice", expect.objectContaining({ accessToken: "synthetic-token" }));
+  expect(discoverInstagramAccount).toHaveBeenCalledWith("synthetic-token","123456789");
   expect(res.redirect).toHaveBeenCalledWith("/?instagram=connected");
   expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", [expect.stringContaining("Max-Age=0")]);
   expect(res.setHeader).toHaveBeenCalledWith("Set-Cookie", [expect.stringContaining("HttpOnly")]);

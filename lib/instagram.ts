@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { parseInstagramJson } from "./instagram-json";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { createClient } from "@supabase/supabase-js";
 import { getR2Client, R2_BUCKET } from "@/lib/r2";
@@ -92,7 +93,7 @@ export function buildInstagramAuthUrl(userId: string, redirectUri: string, brows
   return `${getOAuthBase()}?${params.toString()}`;
 }
 
-export async function exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
+export async function exchangeCodeForToken(code: string, redirectUri: string): Promise<{accessToken:string;igUserId?:string}> {
   const appId = process.env.INSTAGRAM_APP_ID;
   const appSecret = process.env.INSTAGRAM_APP_SECRET;
   if (!appId || !appSecret) throw new Error("Missing Instagram app credentials");
@@ -115,9 +116,17 @@ export async function exchangeCodeForToken(code: string, redirectUri: string): P
           code,
         }),
       });
-  const tokenData = await tokenRes.json();
+  const payload = parseInstagramJson(await tokenRes.text());
+  if (Array.isArray(payload.data) && (payload.access_token || payload.data.length !== 1)) {
+    throw new Error("Instagram returned an ambiguous authorization result. Connect one account at a time.");
+  }
+  const tokenData = Array.isArray(payload.data) ? payload.data[0] : payload;
   if (!tokenRes.ok || !tokenData.access_token) {
     throw new Error(tokenData.error?.message || "Instagram token exchange failed");
+  }
+  const igUserId = mode === "instagram" ? tokenData.user_id : undefined;
+  if (mode === "instagram" && (typeof igUserId !== "string" || !/^\d+$/.test(igUserId))) {
+    throw new Error("Instagram did not return the authorized account ID. Connect Instagram again.");
   }
 
   const longLivedRes = mode === "facebook"
@@ -134,20 +143,23 @@ export async function exchangeCodeForToken(code: string, redirectUri: string): P
       })}`);
   const longLivedData = await longLivedRes.json();
   if (!longLivedRes.ok || !longLivedData.access_token) {
-    return tokenData.access_token;
+    return {accessToken:tokenData.access_token,igUserId};
   }
 
-  return longLivedData.access_token;
+  return {accessToken:longLivedData.access_token,igUserId};
 }
 
-export async function discoverInstagramAccount(accessToken: string) {
+export async function discoverInstagramAccount(accessToken: string, authorizedUserId?: string) {
   if (getAuthMode() === "instagram") {
+    if (typeof authorizedUserId !== "string" || !/^\d+$/.test(authorizedUserId)) {
+      throw new Error("Missing authorized Instagram account ID. Connect Instagram again.");
+    }
     const params = new URLSearchParams({
       access_token: accessToken,
-      fields: "user_id,username,account_type",
+      fields: "user_id,username",
     });
-    const res = await fetch(`${getGraphBase()}/me?${params.toString()}`);
-    const data = await res.json();
+    const res = await fetch(`${getGraphBase()}/${authorizedUserId}?${params.toString()}`);
+    const data = parseInstagramJson(await res.text());
     if (!res.ok) {
       console.error("[Instagram connect] account lookup rejected", {
         status:res.status,
